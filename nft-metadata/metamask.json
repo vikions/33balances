@@ -1,0 +1,11 @@
+{
+  "name": "Faith of MetaMask",
+  "description": "A symbol of belief in the Fox — accessibility, onboarding, and the orange spark of web3.",
+  "image": "ipfs://bafybeigw7hpgad4k2qtcfhzzzatwkrgpydkdeiwve7ire6febslw3a3joe",
+  "external_url": "https://yourapp.example",
+  "attributes": [
+    { "trait_type": "Faith", "value": "MetaMask" },
+    { "trait_type": "Collection", "value": "Proof of TriBalance" },
+    { "trait_type": "Theme", "value": "Energy Ring" }
+  ]
+}

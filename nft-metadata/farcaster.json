@@ -1,0 +1,11 @@
+{
+  "name": "Faith of Farcaster",
+  "description": "A symbol of belief in Farcaster — social, composable, and credibly neutral.",
+  "image": "ipfs://bafybeighyurjdxn2cdb7nabl2wxic6uojwgkfkdjdzm5veqxxrecjfb3ja",
+  "external_url": "https://yourapp.example",
+  "attributes": [
+    { "trait_type": "Faith", "value": "Farcaster" },
+    { "trait_type": "Collection", "value": "Proof of TriBalance" },
+    { "trait_type": "Theme", "value": "Energy Ring" }
+  ]
+}

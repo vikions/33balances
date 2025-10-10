@@ -1,0 +1,11 @@
+{
+  "name": "Faith of Monad",
+  "description": "A symbol of belief in Monad — the eternal layer of truth. Daily faith makes the signal stronger.",
+  "image": "ipfs://bafybeiehstlnvauko7hdzo6ihulweh2vsn4s2pgdjkldhnzkunmge24ol4",
+  "external_url": "https://yourapp.example",
+  "attributes": [
+    { "trait_type": "Faith", "value": "Monad" },
+    { "trait_type": "Collection", "value": "Proof of TriBalance" },
+    { "trait_type": "Theme", "value": "Energy Ring" }
+  ]
+}
