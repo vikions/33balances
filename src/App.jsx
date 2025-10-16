@@ -4,11 +4,13 @@ import { parseAbi } from "viem";
 import {
   initSmartAccount,
   makeCalldata,
+  sendCalls,          // используем как есть
   userOpTrackUrl,
   monadAddressUrl,
 } from "./smartAccount";
 import { getEip1193Provider } from "./fcProvider";
 
+// ENV
 const RPC = import.meta.env.VITE_MONAD_RPC;
 const NFT_ADDR = import.meta.env.VITE_NFT;
 const TRI_ADDR = import.meta.env.VITE_TRI;
@@ -16,13 +18,9 @@ const TRI_ADDR = import.meta.env.VITE_TRI;
 // ABIs
 const NFT_ABI_VIEM = parseAbi(["function mint(uint8 choice) external"]);
 const TRI_ABI_VIEM = parseAbi(["function vote(uint8 choice) external"]);
-const NFT_ABI = [
-  "function balanceOf(address,uint256) view returns (uint256)",
-];
+const NFT_ABI = ["function balanceOf(address,uint256) view returns (uint256)"];
 const TRI_ABI = [
   "function globalPowers() view returns (uint256,uint256,uint256)",
-  "function lastVoteAt(address) view returns (uint64)",
-  "function voteCooldown() view returns (uint256)",
   "function nft() view returns (address)",
 ];
 
@@ -35,16 +33,16 @@ const CHOICES = [
 export default function App() {
   const [provider, setProvider] = useState(null);
   const [eoa, setEoa] = useState(null);
-  const [mmsa, setMmsa] = useState(null);            // { smartAccount, bundler, address }
+  const [mmsa, setMmsa] = useState(null);       // { smartAccount, bundler, ... } — не меняем
   const [smartAddr, setSmartAddr] = useState(null);
   const [lastOpHash, setLastOpHash] = useState(null);
   const [powers, setPowers] = useState({ meta: 0, cast: 0, mon: 0 });
   const [message, setMessage] = useState("");
   const [screen, setScreen] = useState("connect");
   const [loading, setLoading] = useState(false);
-  const [syncWarning, setSyncWarning] = useState(""); // TriBalance.nft vs VITE_NFT
+  const [syncWarning, setSyncWarning] = useState("");
 
-  // ===== Connect Farcaster Wallet (EIP-1193) =====
+  // ===== Connect Farcaster Wallet =====
   async function connectWallet() {
     try {
       setMessage("Connecting Farcaster Wallet...");
@@ -62,7 +60,7 @@ export default function App() {
     }
   }
 
-  // ===== Create MetaMask Smart Account =====
+  // ===== Create Smart Account =====
   async function createSmartAccount() {
     try {
       setMessage("Creating Smart Account...");
@@ -77,7 +75,6 @@ export default function App() {
     }
   }
 
-  // ===== ethers Contracts =====
   async function getContracts(readonly = true) {
     const signer = !readonly && provider ? await provider.getSigner() : null;
     const nft = new ethers.Contract(NFT_ADDR, NFT_ABI, signer || provider);
@@ -85,7 +82,6 @@ export default function App() {
     return { nft, tri };
   }
 
-  // ===== Stats =====
   async function loadPowers() {
     try {
       const { tri } = await getContracts(true);
@@ -96,14 +92,13 @@ export default function App() {
     }
   }
 
-  // ===== Sync check: TriBalance.nft() vs our VITE_NFT =====
   async function checkContractsSync() {
     try {
       const { tri } = await getContracts(true);
       const nftInTri = await tri.nft();
       if (!nftInTri || nftInTri.toLowerCase() !== NFT_ADDR.toLowerCase()) {
         setSyncWarning(
-          `Contracts not synced: TriBalance.nft() = ${nftInTri}, but VITE_NFT = ${NFT_ADDR}`
+          `Contracts not synced: TriBalance.nft() = ${nftInTri}, VITE_NFT = ${NFT_ADDR}`
         );
       } else {
         setSyncWarning("");
@@ -113,7 +108,6 @@ export default function App() {
     }
   }
 
-  // ===== Helper: does SA own the Proof for this choice? =====
   async function hasProof(choice) {
     if (!smartAddr) return false;
     const { nft } = await getContracts(true);
@@ -125,49 +119,48 @@ export default function App() {
     }
   }
 
-  // ===== One-shot "Pledge" = mint + vote in a single userOp =====
+  // ===== One-shot pledge: mint -> vote (2 userOps подряд через твой sendCalls) =====
   async function pledge(choice) {
     if (!mmsa) return setMessage("Create Smart Account first");
     setLoading(true); setMessage(""); setLastOpHash(null);
     try {
+      // 1) mint
       const mintData = makeCalldata(NFT_ABI_VIEM, "mint", [choice]);
+      const res1 = await sendCalls(mmsa, { to: NFT_ADDR, data: mintData });
+      if (res1?.hash) setLastOpHash(res1.hash);
+
+      // 2) vote
       const voteData = makeCalldata(TRI_ABI_VIEM, "vote", [choice]);
+      const res2 = await sendCalls(mmsa, { to: TRI_ADDR, data: voteData });
+      if (res2?.hash) setLastOpHash(res2.hash);
 
-      const hash = await mmsa.bundler.sendUserOperation({
-        account: mmsa.smartAccount,
-        calls: [
-          { to: NFT_ADDR, data: mintData, value: 0n },
-          { to: TRI_ADDR, data: voteData, value: 0n },
-        ],
-      });
-
-      setLastOpHash(hash);
       setMessage("✅ Pledge complete (Mint + Vote)");
       await loadPowers();
     } catch (e) {
-      setMessage(e.message || String(e));
+      // если видим revert “No ProofOfFaith NFT” на vote, просто покажем, что mint прошёл
+      if (String(e).includes("No ProofOfFaith NFT")) {
+        setMessage("Mint done ✅. Vote skipped (no NFT detected). Try again.");
+      } else {
+        setMessage(e.message || String(e));
+      }
     } finally {
       setLoading(false);
     }
   }
 
-  // ===== Vote (auto-fixes by doing Pledge if no proof yet) =====
+  // ===== Vote (если NFT нет — сначала pledge) =====
   async function vote(choice) {
     if (!mmsa) return setMessage("Create Smart Account first");
     setLoading(true); setMessage(""); setLastOpHash(null);
     try {
       const owns = await hasProof(choice);
       if (!owns) {
-        // auto-fix: do mint+vote together
         await pledge(choice);
         return;
       }
       const voteData = makeCalldata(TRI_ABI_VIEM, "vote", [choice]);
-      const hash = await mmsa.bundler.sendUserOperation({
-        account: mmsa.smartAccount,
-        calls: [{ to: TRI_ADDR, data: voteData, value: 0n }],
-      });
-      setLastOpHash(hash);
+      const res = await sendCalls(mmsa, { to: TRI_ADDR, data: voteData });
+      if (res?.hash) setLastOpHash(res.hash);
       setMessage("✅ Vote cast");
       await loadPowers();
     } catch (e) {
@@ -177,29 +170,9 @@ export default function App() {
     }
   }
 
-  // ===== Mint (manual) =====
-  async function mint(choice) {
-    if (!mmsa) return setMessage("Create Smart Account first");
-    setLoading(true); setMessage(""); setLastOpHash(null);
-    try {
-      const mintData = makeCalldata(NFT_ABI_VIEM, "mint", [choice]);
-      const hash = await mmsa.bundler.sendUserOperation({
-        account: mmsa.smartAccount,
-        calls: [{ to: NFT_ADDR, data: mintData, value: 0n }],
-      });
-      setLastOpHash(hash);
-      setMessage("✅ NFT minted");
-    } catch (e) {
-      setMessage(e.message || String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // initial stats refresh when SA appears
   useEffect(() => { if (smartAddr) loadPowers(); }, [smartAddr]);
 
-  // ===== Screens =====
+  // ===== UI =====
   if (screen === "connect") {
     return (
       <PhoneShell>
@@ -225,20 +198,17 @@ export default function App() {
   return (
     <PhoneShell>
       <h1>TriBalance</h1>
-
       <p>Smart Account: {smartAddr ? (
         <a className="link" href={monadAddressUrl(smartAddr)} target="_blank" rel="noreferrer">
           {smartAddr.slice(0,6)}…{smartAddr.slice(-4)}
         </a>
       ) : "—"}</p>
 
-      {syncWarning && (
-        <div className="warn">{syncWarning}</div>
-      )}
+      {syncWarning && <div className="warn">{syncWarning}</div>}
 
       <Balance meta={powers.meta} cast={powers.cast} mon={powers.mon} />
 
-      <h3 style={{marginTop:12}}>Pledge (Mint + Vote)</h3>
+      <h3 style={{marginTop:12}}>Pledge (Mint → Vote)</h3>
       {CHOICES.map(c => (
         <button key={c.id} className="card" disabled={loading || !mmsa} onClick={() => pledge(c.id)}>
           <span>{c.emoji}</span> Pledge {c.label}
@@ -249,13 +219,6 @@ export default function App() {
       {CHOICES.map(c => (
         <button key={c.id} className="card" disabled={loading || !mmsa} onClick={() => vote(c.id)}>
           <span>{c.emoji}</span> Vote {c.label}
-        </button>
-      ))}
-
-      <h3 style={{marginTop:16}}>Mint NFT (manual)</h3>
-      {CHOICES.map(c => (
-        <button key={c.id} className="card" disabled={loading || !mmsa} onClick={() => mint(c.id)}>
-          <span>{c.emoji}</span> Mint {c.label}
         </button>
       ))}
 
