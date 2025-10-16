@@ -4,13 +4,12 @@ import { parseAbi } from "viem";
 import {
   initSmartAccount,
   makeCalldata,
-  sendCalls,          // используем как есть
+  sendCalls,
   userOpTrackUrl,
   monadAddressUrl,
 } from "./smartAccount";
 import { getEip1193Provider } from "./fcProvider";
 
-// ENV
 const RPC = import.meta.env.VITE_MONAD_RPC;
 const NFT_ADDR = import.meta.env.VITE_NFT;
 const TRI_ADDR = import.meta.env.VITE_TRI;
@@ -18,9 +17,14 @@ const TRI_ADDR = import.meta.env.VITE_TRI;
 // ABIs
 const NFT_ABI_VIEM = parseAbi(["function mint(uint8 choice) external"]);
 const TRI_ABI_VIEM = parseAbi(["function vote(uint8 choice) external"]);
-const NFT_ABI = ["function balanceOf(address,uint256) view returns (uint256)"];
+const NFT_ABI = [
+  "function hasMinted(address) view returns (bool)",
+  "function balanceOf(address,uint256) view returns (uint256)",
+];
 const TRI_ABI = [
   "function globalPowers() view returns (uint256,uint256,uint256)",
+  "function lastVoteAt(address) view returns (uint64)",
+  "function voteCooldown() view returns (uint256)",
   "function nft() view returns (address)",
 ];
 
@@ -33,7 +37,7 @@ const CHOICES = [
 export default function App() {
   const [provider, setProvider] = useState(null);
   const [eoa, setEoa] = useState(null);
-  const [mmsa, setMmsa] = useState(null);       // { smartAccount, bundler, ... } — не меняем
+  const [mmsa, setMmsa] = useState(null);            // { smartAccount, bundler, paymaster, address }
   const [smartAddr, setSmartAddr] = useState(null);
   const [lastOpHash, setLastOpHash] = useState(null);
   const [powers, setPowers] = useState({ meta: 0, cast: 0, mon: 0 });
@@ -42,7 +46,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [syncWarning, setSyncWarning] = useState("");
 
-  // ===== Connect Farcaster Wallet =====
+  // ————— Connect Farcaster Wallet —————
   async function connectWallet() {
     try {
       setMessage("Connecting Farcaster Wallet...");
@@ -60,7 +64,7 @@ export default function App() {
     }
   }
 
-  // ===== Create Smart Account =====
+  // ————— Create Smart Account —————
   async function createSmartAccount() {
     try {
       setMessage("Creating Smart Account...");
@@ -98,7 +102,8 @@ export default function App() {
       const nftInTri = await tri.nft();
       if (!nftInTri || nftInTri.toLowerCase() !== NFT_ADDR.toLowerCase()) {
         setSyncWarning(
-          `Contracts not synced: TriBalance.nft() = ${nftInTri}, VITE_NFT = ${NFT_ADDR}`
+          `⚠️ TriBalance.nft() = ${nftInTri}, а VITE_NFT = ${NFT_ADDR}. ` +
+          `Голоса будут ревертиться. Пересобери TRI с правильным NFT или обнови .env.`
         );
       } else {
         setSyncWarning("");
@@ -108,10 +113,11 @@ export default function App() {
     }
   }
 
-  async function hasProof(choice) {
+  // ————— Helpers: ownership —————
+  async function hasNftOfChoice(choice) {
     if (!smartAddr) return false;
-    const { nft } = await getContracts(true);
     try {
+      const { nft } = await getContracts(true);
       const bal = await nft.balanceOf(smartAddr, choice);
       return Number(bal) > 0;
     } catch {
@@ -119,50 +125,39 @@ export default function App() {
     }
   }
 
-  // ===== One-shot pledge: mint -> vote (2 userOps подряд через твой sendCalls) =====
-  async function pledge(choice) {
-    if (!mmsa) return setMessage("Create Smart Account first");
-    setLoading(true); setMessage(""); setLastOpHash(null);
+  async function alreadyMintedAny() {
+    if (!smartAddr) return false;
     try {
-      // 1) mint
-      const mintData = makeCalldata(NFT_ABI_VIEM, "mint", [choice]);
-      const res1 = await sendCalls(mmsa, { to: NFT_ADDR, data: mintData });
-      if (res1?.hash) setLastOpHash(res1.hash);
-
-      // 2) vote
-      const voteData = makeCalldata(TRI_ABI_VIEM, "vote", [choice]);
-      const res2 = await sendCalls(mmsa, { to: TRI_ADDR, data: voteData });
-      if (res2?.hash) setLastOpHash(res2.hash);
-
-      setMessage("✅ Pledge complete (Mint + Vote)");
-      await loadPowers();
-    } catch (e) {
-      // если видим revert “No ProofOfFaith NFT” на vote, просто покажем, что mint прошёл
-      if (String(e).includes("No ProofOfFaith NFT")) {
-        setMessage("Mint done ✅. Vote skipped (no NFT detected). Try again.");
-      } else {
-        setMessage(e.message || String(e));
-      }
-    } finally {
-      setLoading(false);
+      const { nft } = await getContracts(true);
+      return await nft.hasMinted(smartAddr);
+    } catch {
+      return false;
     }
   }
 
-  // ===== Vote (если NFT нет — сначала pledge) =====
-  async function vote(choice) {
-    if (!mmsa) return setMessage("Create Smart Account first");
-    setLoading(true); setMessage(""); setLastOpHash(null);
+  // ————— Actions —————
+  async function mint(choice) {
     try {
-      const owns = await hasProof(choice);
-      if (!owns) {
-        await pledge(choice);
-        return;
+      if (!mmsa) throw new Error("Create Smart Account first");
+      setLoading(true); setMessage(""); setLastOpHash(null);
+
+      // если уже минтил ЛЮБУЮ Proof NFT — не зовём mint снова
+      const mintedAny = await alreadyMintedAny();
+      if (mintedAny) {
+        const ownsThis = await hasNftOfChoice(choice);
+        if (ownsThis) {
+          setMessage("You already minted this Proof ✅");
+          return;
+        } else {
+          setMessage("Already minted a Proof (other choice). Mint is blocked by contract.");
+          return;
+        }
       }
-      const voteData = makeCalldata(TRI_ABI_VIEM, "vote", [choice]);
-      const res = await sendCalls(mmsa, { to: TRI_ADDR, data: voteData });
-      if (res?.hash) setLastOpHash(res.hash);
-      setMessage("✅ Vote cast");
-      await loadPowers();
+
+      const data = makeCalldata(NFT_ABI_VIEM, "mint", [choice]);
+      const { hash } = await sendCalls(mmsa, { to: NFT_ADDR, data });
+      if (hash) setLastOpHash(hash);
+      setMessage("✅ NFT minted!");
     } catch (e) {
       setMessage(e.message || String(e));
     } finally {
@@ -170,9 +165,47 @@ export default function App() {
     }
   }
 
-  useEffect(() => { if (smartAddr) loadPowers(); }, [smartAddr]);
+  async function vote(choice) {
+    try {
+      if (!mmsa) throw new Error("Create Smart Account first");
+      if (syncWarning) throw new Error(syncWarning);
+      setLoading(true); setMessage(""); setLastOpHash(null);
 
-  // ===== UI =====
+      // Если NFT этого выбора нет — пробуем минтнуть (один раз в жизни — если сможем)
+      const owns = await hasNftOfChoice(choice);
+      if (!owns) {
+        const mintedAny = await alreadyMintedAny();
+        if (mintedAny) {
+          // Минт заблокирован контрактом (другой выбор уже добыт)
+          throw new Error("No Proof for this choice. You minted another one earlier.");
+        }
+        // Минтим и продолжаем
+        const mintData = makeCalldata(NFT_ABI_VIEM, "mint", [choice]);
+        const r1 = await sendCalls(mmsa, { to: NFT_ADDR, data: mintData });
+        if (r1?.hash) setLastOpHash(r1.hash);
+      }
+
+      // Голосуем
+      const voteData = makeCalldata(TRI_ABI_VIEM, "vote", [choice]);
+      const r2 = await sendCalls(mmsa, { to: TRI_ADDR, data: voteData });
+      if (r2?.hash) setLastOpHash(r2.hash);
+
+      setMessage("✅ Vote cast!");
+      await loadPowers();
+    } catch (e) {
+      // дружелюбный текст для типичных причин
+      const msg = String(e);
+      if (msg.includes("No ProofOfFaith NFT")) {
+        setMessage("You don't hold the required Proof NFT for this choice.");
+      } else {
+        setMessage(e.message || msg);
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // ————— Screens —————
   if (screen === "connect") {
     return (
       <PhoneShell>
@@ -208,23 +241,24 @@ export default function App() {
 
       <Balance meta={powers.meta} cast={powers.cast} mon={powers.mon} />
 
-      <h3 style={{marginTop:12}}>Pledge (Mint → Vote)</h3>
-      {CHOICES.map(c => (
-        <button key={c.id} className="card" disabled={loading || !mmsa} onClick={() => pledge(c.id)}>
-          <span>{c.emoji}</span> Pledge {c.label}
-        </button>
-      ))}
-
-      <h3 style={{marginTop:16}}>Vote</h3>
-      {CHOICES.map(c => (
+      <h3>Vote</h3>
+      {CHOICES.map((c) => (
         <button key={c.id} className="card" disabled={loading || !mmsa} onClick={() => vote(c.id)}>
           <span>{c.emoji}</span> Vote {c.label}
         </button>
       ))}
 
+      <h3>Mint NFT</h3>
+      {CHOICES.map((c) => (
+        <button key={c.id} className="card" disabled={loading || !mmsa} onClick={() => mint(c.id)}>
+          <span>{c.emoji}</span> Mint {c.label}
+        </button>
+      ))}
+
       {lastOpHash && (
         <p className="msg">
-          userOp: <a className="link" href={userOpTrackUrl(lastOpHash)} target="_blank" rel="noreferrer">
+          userOp:{" "}
+          <a className="link" href={userOpTrackUrl(lastOpHash)} target="_blank" rel="noreferrer">
             {lastOpHash.slice(0,10)}…
           </a>
         </p>
@@ -243,8 +277,6 @@ function PhoneShell({ children }) {
       minHeight: "100vh",
       padding: 24,
       fontFamily: "Inter, system-ui, sans-serif",
-      maxWidth: 420,
-      margin: "0 auto"
     }}>
       {children}
       <style>{`
@@ -267,11 +299,9 @@ function PhoneShell({ children }) {
           padding: 12px 16px;
           margin-top: 8px;
           color: #fff;
-          width: 100%;
-          text-align: left;
         }
         .link { color: #6ca8ff; text-decoration: none; }
-        .msg { margin-top: 10px; opacity: 0.85; }
+        .msg { margin-top: 10px; opacity: .85; }
         .warn {
           background: #2b1f00;
           border: 1px solid #6b5200;
@@ -294,7 +324,7 @@ function Balance({ meta, cast, mon }) {
     mon: Math.round((mon / total) * 100),
   };
   return (
-    <div style={{ border: "1px solid #23242a", padding: 12, borderRadius: 12, margin: "12px 0" }}>
+    <div style={{ border: "1px solid #23242a", padding: 12, borderRadius: 12, marginBottom: 16 }}>
       <p>MetaMask {pct.meta}% | Farcaster {pct.cast}% | Monad {pct.mon}%</p>
     </div>
   );
