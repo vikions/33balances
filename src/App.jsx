@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { parseAbi, encodeFunctionData } from "viem";
-import { initSmartAccount, userOpTrackUrl, monadAddressUrl } from "./smartAccount";
+import { initSmartAccount, userOpTrackUrl, monadAddressUrl, sendCalls } from "./smartAccount";
 import { getEip1193Provider } from "./fcProvider";
 
 // === ENV / ADDRS ===
@@ -159,14 +159,9 @@ export default function App() {
     });
   }
 
-  // AA send
+  // AA send — ТЕПЕРЬ через наш sendCalls (EP v0.7 + sponsorship + газ-хинты)
   async function sendOne(to, data, value = 0n) {
-    const { bundler, smartAccount, paymaster } = mmsa;
-    const hash = await bundler.sendUserOperation({
-      account: smartAccount,
-      calls: [{ to, data, value }],
-      paymaster,
-    });
+    const { hash } = await sendCalls(mmsa, { to, data, value });
     return { hash };
   }
 

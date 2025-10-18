@@ -10,7 +10,7 @@ import {
   createBundlerClient,
   createPaymasterClient,
 } from "viem/account-abstraction";
-import { monadTestnet, ENTRY_POINT_V06 } from "./chain";
+import { monadTestnet } from "./chain"; // <-- тут больше не нужен EP_v06
 import {
   Implementation,
   toMetaMaskSmartAccount,
@@ -34,6 +34,16 @@ export const ENTRY_POINT_V07 =
 export function makePublicClient() {
   return createPublicClient({ chain: monadTestnet, transport: http(RPC) });
 }
+
+// консервативные, но рабочие подсказки по газу, чтобы бандлер не делал бинарный поиск
+const GAS_HINTS = {
+  // कॉल-газ на сам вызов контракта
+  callGasLimit:          400_000n,
+  // верификация подписи/аккаунта
+  verificationGasLimit: 1_300_000n,
+  // «наружные» расходы; лучше не ставить 0
+  preVerificationGas:   110_000n,
+};
 
 export async function initSmartAccount() {
   const eip1193 = await getEip1193Provider();
@@ -63,16 +73,10 @@ export async function initSmartAccount() {
     chain: monadTestnet,
   });
 
-  // Bundlers: v0.7 (основной) + v0.6 (фоллбэк)
-  const bundlerV07 = createBundlerClient({
+  // Bundler (EP v0.7 — один единственный путь)
+  const bundler = createBundlerClient({
     client: publicClient,
     entryPoint: ENTRY_POINT_V07,
-    transport: http(BUNDLER_URL),
-  });
-
-  const bundlerV06 = createBundlerClient({
-    client: publicClient,
-    entryPoint: ENTRY_POINT_V06,
     transport: http(BUNDLER_URL),
   });
 
@@ -84,15 +88,9 @@ export async function initSmartAccount() {
     ),
   });
 
-  // !!! Совместимость со старым кодом:
-  // вернём поле `bundler` как alias на v0.7
-  const bundler = bundlerV07;
-
   return {
     smartAccount,
-    bundler,      // <-- чтобы твой App.jsx не падал
-    bundlerV07,
-    bundlerV06,
+    bundler,
     paymaster,
     address: smartAccount.address,
   };
@@ -102,43 +100,34 @@ export function makeCalldata(abi, fn, args) {
   return encodeFunctionData({ abi, functionName: fn, args });
 }
 
-// Хелпер с фоллбэком EP 0.7 -> 0.6
-export async function sendWithFallback(ctx, { to, data, value = 0n }) {
-  const { smartAccount, paymaster, bundlerV07, bundlerV06 } = ctx;
-
-  async function trySend(bundler, label) {
-    const hash = await bundler.sendUserOperation({
-      account: smartAccount,
-      calls: [{ to, data, value }],
-      paymaster,
-    });
-    console.info(`userOp via ${label}:`, hash);
-    return hash;
-  }
-
-  try {
-    const hash = await trySend(bundlerV07, "EP v0.7");
-    return { hash };
-  } catch (e) {
-    const m = (e?.message || e?.shortMessage || "").toLowerCase();
-    if (
-      m.includes("simulatevalidation") ||
-      m.includes("binarysearchcallgas") ||
-      m.includes("call_exception") ||
-      m.includes("reverted during simulation") ||
-      m.includes("aa")
-    ) {
-      console.info("Retrying with EP v0.6…");
-      const hash = await trySend(bundlerV06, "EP v0.6");
-      return { hash };
-    }
-    throw e;
-  }
-}
-
-// Старая сигнатура — теперь внутри юзает фоллбэк
+/**
+ * Отправка одиночного call как SPONSORED userOp для EP v0.7:
+ * 1) готовим userOp c подсказками по газу,
+ * 2) просим у paymaster спонсорство (sponsorUserOperation),
+ * 3) отправляем готовый userOp в бандлер.
+ */
 export async function sendCalls(ctx, { to, data, value = 0n }) {
-  return await sendWithFallback(ctx, { to, data, value });
+  const { smartAccount, paymaster, bundler } = ctx;
+
+  // 1. Собираем userOp сами (ключевой фикс!) с газ-хинтами
+  const uo = await smartAccount.prepareUserOperation({
+    calls: [{ to, data, value }],
+    ...GAS_HINTS,
+  });
+
+  // 2. Просим спонсорство ровно под EP v0.7
+  const sponsorship = await paymaster.sponsorUserOperation({
+    userOperation: uo,
+    entryPoint: ENTRY_POINT_V07,
+    // sponsorshipPolicyId: '...если хочешь привязать полиси явно...'
+  });
+
+  // 3. Отправляем готовый юзерОп
+  const hash = await bundler.sendUserOperation({
+    userOperation: { ...uo, ...sponsorship },
+  });
+
+  return { hash };
 }
 
 export function userOpTrackUrl(hash) {
