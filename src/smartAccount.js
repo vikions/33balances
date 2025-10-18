@@ -1,3 +1,4 @@
+// smartAccount.js
 import {
   createPublicClient,
   createWalletClient,
@@ -26,8 +27,9 @@ const BUNDLER_URL =
 
 if (!PIMLICO_API_KEY) throw new Error("Missing VITE_PIMLICO_API_KEY");
 
-// EP v0.7 на Monad (Pimlico)
-export const ENTRY_POINT_V07 = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
+// EP v0.7 (Monad testnet, Pimlico)
+export const ENTRY_POINT_V07 =
+  "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 
 export function makePublicClient() {
   return createPublicClient({ chain: monadTestnet, transport: http(RPC) });
@@ -61,7 +63,7 @@ export async function initSmartAccount() {
     chain: monadTestnet,
   });
 
-  // ДВА бандлера: v0.7 и v0.6
+  // Bundlers: v0.7 (основной) + v0.6 (фоллбэк)
   const bundlerV07 = createBundlerClient({
     client: publicClient,
     entryPoint: ENTRY_POINT_V07,
@@ -74,7 +76,7 @@ export async function initSmartAccount() {
     transport: http(BUNDLER_URL),
   });
 
-  // Paymaster Pimlico (тут EP не указываем — он проставится в sponsorUserOperation)
+  // Paymaster
   const paymaster = createPaymasterClient({
     chain: monadTestnet,
     transport: http(
@@ -82,8 +84,13 @@ export async function initSmartAccount() {
     ),
   });
 
+  // !!! Совместимость со старым кодом:
+  // вернём поле `bundler` как alias на v0.7
+  const bundler = bundlerV07;
+
   return {
     smartAccount,
+    bundler,      // <-- чтобы твой App.jsx не падал
     bundlerV07,
     bundlerV06,
     paymaster,
@@ -95,39 +102,25 @@ export function makeCalldata(abi, fn, args) {
   return encodeFunctionData({ abi, functionName: fn, args });
 }
 
-// Умная отправка: сначала EP v0.7 → если реверт на симуляции, пробуем EP v0.6
-export async function sendCalls(ctx, { to, data, value = 0n }) {
+// Хелпер с фоллбэком EP 0.7 -> 0.6
+export async function sendWithFallback(ctx, { to, data, value = 0n }) {
   const { smartAccount, paymaster, bundlerV07, bundlerV06 } = ctx;
 
-  // вспомогательная обёртка
   async function trySend(bundler, label) {
-    try {
-      const hash = await bundler.sendUserOperation({
-        account: smartAccount,
-        calls: [{ to, data, value }],
-        paymaster,
-      });
-      // для отладки — видно, через какой EP полетело
-      console.info(`userOp sent via ${label}:`, hash);
-      return { hash };
-    } catch (e) {
-      const msg =
-        e?.shortMessage ||
-        e?.message ||
-        e?.data?.message ||
-        e?.details ||
-        String(e);
-      console.warn(`send via ${label} failed:`, msg, e);
-      throw e;
-    }
+    const hash = await bundler.sendUserOperation({
+      account: smartAccount,
+      calls: [{ to, data, value }],
+      paymaster,
+    });
+    console.info(`userOp via ${label}:`, hash);
+    return hash;
   }
 
-  // 1) пробуем v0.7
   try {
-    return await trySend(bundlerV07, "EP v0.7");
+    const hash = await trySend(bundlerV07, "EP v0.7");
+    return { hash };
   } catch (e) {
     const m = (e?.message || e?.shortMessage || "").toLowerCase();
-    // признаки проблем симуляции/бинарного поиска/AA-кодов — ретраим на v0.6
     if (
       m.includes("simulatevalidation") ||
       m.includes("binarysearchcallgas") ||
@@ -136,10 +129,16 @@ export async function sendCalls(ctx, { to, data, value = 0n }) {
       m.includes("aa")
     ) {
       console.info("Retrying with EP v0.6…");
-      return await trySend(bundlerV06, "EP v0.6");
+      const hash = await trySend(bundlerV06, "EP v0.6");
+      return { hash };
     }
     throw e;
   }
+}
+
+// Старая сигнатура — теперь внутри юзает фоллбэк
+export async function sendCalls(ctx, { to, data, value = 0n }) {
+  return await sendWithFallback(ctx, { to, data, value });
 }
 
 export function userOpTrackUrl(hash) {
