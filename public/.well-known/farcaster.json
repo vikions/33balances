@@ -1,0 +1,7 @@
+{
+  "name": "TriBalance",
+  "description": "Smart Account voting dApp. Mint a Proof and vote with MetaMask Smart Account inside Farcaster.",
+  "iconUrl": "https://3balances.vercel.app/icon.png",
+  "homeUrl": "https://3balances.vercel.app/",
+  "sdkUrl": "https://esm.sh/@farcaster/miniapp-sdk@latest"
+}
