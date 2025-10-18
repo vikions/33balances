@@ -1,26 +1,20 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
 import { parseAbi, encodeFunctionData } from "viem";
-import {
-  initSmartAccount,
-  userOpTrackUrl,
-  monadAddressUrl,
-} from "./smartAccount";
+import { initSmartAccount, userOpTrackUrl, monadAddressUrl } from "./smartAccount";
 import { getEip1193Provider } from "./fcProvider";
 
+// === ENV / ADDRS ===
 const RPC = import.meta.env.VITE_MONAD_RPC;
 const NFT_ADDR = ethers.getAddress(import.meta.env.VITE_NFT);
 const TRI_ADDR = ethers.getAddress(import.meta.env.VITE_TRI);
 
-// === Сигнатуры КАК В СОЛИДИТИ ===
+// === ABIs ===
 const MINT_SIG = "function mint(uint8 choice)";
 const VOTE_SIG = "function vote(uint8 choice)";
-
-// viem ABI — ровно нужные методы
 const NFT_ABI_VIEM = parseAbi([MINT_SIG]);
 const TRI_ABI_VIEM = parseAbi([VOTE_SIG]);
 
-// ethers ABI для чтения
 const NFT_ABI = [
   "function hasMinted(address) view returns (bool)",
   "function balanceOf(address,uint256) view returns (uint256)",
@@ -32,39 +26,47 @@ const TRI_ABI = [
 ];
 
 const CHOICES = [
-  { id: 0, label: "MetaMask", emoji: "🦊" },
-  { id: 1, label: "Farcaster", emoji: "💜" },
-  { id: 2, label: "Monad", emoji: "🧬" },
+  { id: 0, label: "MetaMask", emoji: "🦊", color: "#ff7a00", glow: "rgba(255,122,0,0.35)" },
+  { id: 1, label: "Farcaster", emoji: "💜", color: "#a855f7", glow: "rgba(168,85,247,0.35)" },
+  { id: 2, label: "Monad", emoji: "🧬", color: "#00ffd5", glow: "rgba(0,255,213,0.35)" },
 ];
 
+// ===== APP =====
 export default function App() {
-  const [provider, setProvider] = useState(null);         // BrowserProvider (Farcaster) — ТОЛЬКО для SA
-  const [readProvider, setReadProvider] = useState(null); // JsonRpcProvider (RPC) — ТОЛЬКО для чтения
+  // providers
+  const [readProvider, setReadProvider] = useState(null); // только RPC для чтения
+  const [provider, setProvider] = useState(null); // Farcaster BrowserProvider — только для подключения
+
+  // state
   const [eoa, setEoa] = useState(null);
-  const [mmsa, setMmsa] = useState(null);                 // { smartAccount, bundler, paymaster, address }
+  const [mmsa, setMmsa] = useState(null);
   const [smartAddr, setSmartAddr] = useState(null);
   const [lastOpHash, setLastOpHash] = useState(null);
+
   const [powers, setPowers] = useState({ meta: 0, cast: 0, mon: 0 });
+  const [ownedChoice, setOwnedChoice] = useState(null);
+
   const [message, setMessage] = useState("");
-  const [screen, setScreen] = useState("connect");        // connect -> createSA -> app
+  const [screen, setScreen] = useState("connect");
   const [loading, setLoading] = useState(false);
 
-  // Инициализируем read RPC-провайдер один раз
+  // init read provider
   useEffect(() => {
     setReadProvider(new ethers.JsonRpcProvider(RPC));
   }, []);
 
-  // ===== READ-ONLY КОНТРАКТЫ (всегда через RPC!) =====
-  function getReadContracts() {
-    const rp = readProvider ?? new ethers.JsonRpcProvider(RPC);
-    const nft = new ethers.Contract(NFT_ADDR, NFT_ABI, rp);
-    const tri = new ethers.Contract(TRI_ADDR, TRI_ABI, rp);
+  // read-only contracts (всегда через RPC!)
+  const readContracts = useMemo(() => {
+    if (!readProvider) return null;
+    const nft = new ethers.Contract(NFT_ADDR, NFT_ABI, readProvider);
+    const tri = new ethers.Contract(TRI_ADDR, TRI_ABI, readProvider);
     return { nft, tri };
-  }
+  }, [readProvider]);
 
-  // ---------- helpers (только чтение через RPC) ----------
+  // helpers
   async function getOwnedChoice(addr) {
-    const { nft } = getReadContracts();
+    if (!readContracts) return null;
+    const { nft } = readContracts;
     for (const c of CHOICES) {
       const bal = await nft.balanceOf(addr, c.id);
       if (bal && bal !== 0n) return c.id;
@@ -72,18 +74,9 @@ export default function App() {
     return null;
   }
 
-  async function hasMinted(addr) {
-    try {
-      const { nft } = getReadContracts();
-      return await nft.hasMinted(addr);
-    } catch {
-      return false;
-    }
-  }
-
   async function getCooldownLeft(addr) {
     try {
-      const { tri } = getReadContracts();
+      const { tri } = readContracts;
       const last = BigInt(await tri.lastVoteAt(addr));
       const cd = BigInt(await tri.voteCooldown());
       const now = BigInt(Math.floor(Date.now() / 1000));
@@ -95,9 +88,9 @@ export default function App() {
   }
 
   async function loadPowers() {
+    if (!readContracts) return;
     try {
-      if (!readProvider) return;
-      const { tri } = getReadContracts();
+      const { tri } = readContracts;
       const [m, c, n] = await tri.globalPowers();
       setPowers({ meta: Number(m), cast: Number(c), mon: Number(n) });
     } catch (e) {
@@ -105,19 +98,32 @@ export default function App() {
     }
   }
 
-  // ---------- wallet / SA ----------
+  async function refreshOwnedChoice() {
+    if (!mmsa) return;
+    try {
+      setOwnedChoice(await getOwnedChoice(mmsa.address));
+    } catch {}
+  }
+
+  // polling: авто-обновление процентов
+  useEffect(() => {
+    if (!readProvider) return;
+    const id = setInterval(loadPowers, 5000);
+    return () => clearInterval(id);
+  }, [readProvider]);
+
+  // connect / create SA
   async function connectWallet() {
     try {
-      setMessage("Connecting Farcaster Wallet...");
+      setMessage("Connecting Farcaster Wallet…");
       const eip1193 = await getEip1193Provider();
       const eth = new ethers.BrowserProvider(eip1193);
       setProvider(eth);
-
       const accs = await eip1193.request({ method: "eth_requestAccounts" });
       const addr = ethers.getAddress(accs[0]);
       setEoa(addr);
-      setMessage("");
       setScreen("createSA");
+      setMessage("");
     } catch (e) {
       setMessage(humanError(e));
     }
@@ -125,36 +131,35 @@ export default function App() {
 
   async function createSmartAccount() {
     try {
-      setMessage("Creating Smart Account...");
+      setMessage("Creating Smart Account…");
       const ctx = await initSmartAccount();
       setMmsa(ctx);
       setSmartAddr(ctx.address);
-      setMessage("✅ Smart Account created!");
       setScreen("app");
-      // подождём пока readProvider инициализируется
-      setTimeout(loadPowers, 100);
+      setMessage("✅ Smart Account created!");
+      await Promise.all([loadPowers(), refreshOwnedChoice()]);
     } catch (e) {
       setMessage(humanError(e));
     }
   }
 
-  // ---------- calldata builders ----------
+  // calldata
   function buildMintCalldata(choice) {
     return encodeFunctionData({
       abi: NFT_ABI_VIEM,
       functionName: "mint",
-      args: [Number(choice)], // uint8
+      args: [Number(choice)],
     });
   }
-
   function buildVoteCalldata(choice) {
     return encodeFunctionData({
       abi: TRI_ABI_VIEM,
       functionName: "vote",
-      args: [Number(choice)], // uint8
+      args: [Number(choice)],
     });
   }
 
+  // AA send
   async function sendOne(to, data, value = 0n) {
     const { bundler, smartAccount, paymaster } = mmsa;
     const hash = await bundler.sendUserOperation({
@@ -165,40 +170,24 @@ export default function App() {
     return { hash };
   }
 
-  // ---------- actions ----------
+  // actions
   async function handleMint(choice) {
     if (!mmsa) return setMessage("Create Smart Account first");
     setLoading(true);
     setMessage("");
     setLastOpHash(null);
     try {
-      // защита от повтора
-      if (await hasMinted(mmsa.address)) {
-        const owned = await getOwnedChoice(mmsa.address);
-        if (owned === null) {
-          setMessage("Этот Smart Account уже исчерпал право минта, но Proof не найден. Возможно, минтили другим адресом.");
-        } else if (owned === choice) {
-          setMessage("You already minted this Proof ✅");
-        } else {
-          setMessage(`Already minted another Proof (choice=${owned}). Use that Proof or new SA.`);
-        }
+      const already = await getOwnedChoice(mmsa.address);
+      if (already !== null) {
+        if (already === choice) setMessage("You already minted this Proof ✅");
+        else setMessage(`Already minted another Proof (choice=${already}).`);
         return;
       }
-
-      const owned = await getOwnedChoice(mmsa.address);
-      if (owned !== null) {
-        if (owned === choice) {
-          setMessage("You already minted this Proof ✅");
-        } else {
-          setMessage(`Already minted another Proof (choice=${owned}).`);
-        }
-        return;
-      }
-
       const data = buildMintCalldata(choice);
       const { hash } = await sendOne(NFT_ADDR, data);
       setLastOpHash(hash);
       setMessage("✅ NFT minted!");
+      await refreshOwnedChoice();
     } catch (e) {
       setMessage(humanError(e));
     } finally {
@@ -214,10 +203,9 @@ export default function App() {
     try {
       const left = await getCooldownLeft(mmsa.address);
       if (left > 0) {
-        setMessage(`Cooldown: подождите ещё ${left} сек.`);
+        setMessage(`Cooldown: подождите ещё ${left}s.`);
         return;
       }
-
       const owned = await getOwnedChoice(mmsa.address);
       if (owned === choice) {
         const data = buildVoteCalldata(choice);
@@ -227,23 +215,17 @@ export default function App() {
         await loadPowers();
         return;
       }
-
       if (owned === null) {
-        // нет Proof — сначала mint, затем vote (две отдельные userOps)
-        const dataMint = buildMintCalldata(choice);
-        const { hash: h1 } = await sendOne(NFT_ADDR, dataMint);
+        // автоматом: mint -> vote (две userOp подряд)
+        const { hash: h1 } = await sendOne(NFT_ADDR, buildMintCalldata(choice));
         setLastOpHash(h1);
-
-        const dataVote = buildVoteCalldata(choice);
-        const { hash: h2 } = await sendOne(TRI_ADDR, dataVote);
+        const { hash: h2 } = await sendOne(TRI_ADDR, buildVoteCalldata(choice));
         setLastOpHash(h2);
-
         setMessage("✅ Minted & Voted!");
-        await loadPowers();
+        await Promise.all([loadPowers(), refreshOwnedChoice()]);
         return;
       }
-
-      setMessage(`This Smart Account owns a different Proof (choice=${owned}). Vote with that Proof.`);
+      setMessage(`This Smart Account owns a different Proof (choice=${owned}).`);
     } catch (e) {
       setMessage(humanError(e));
     } finally {
@@ -251,134 +233,266 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    if (readProvider) loadPowers();
-  }, [readProvider]);
-
-  // ---------- UI ----------
+  // UI
   if (screen === "connect") {
     return (
-      <PhoneShell>
-        <h1>TriBalance</h1>
-        <p>Connect your Farcaster Wallet to continue.</p>
-        <button className="btn" onClick={connectWallet}>
-          Connect Wallet
-        </button>
-        {message && <p className="msg">{message}</p>}
-      </PhoneShell>
+      <Shell>
+        <Header />
+        <Card>
+          <p className="muted">Welcome to</p>
+          <h1 className="title">TriBalance</h1>
+          <p className="muted">Vote with a MetaMask Smart Account inside Farcaster.</p>
+          <Button primary onClick={connectWallet}>Connect Farcaster Wallet</Button>
+          {message && <p className="msg">{message}</p>}
+        </Card>
+      </Shell>
     );
   }
 
   if (screen === "createSA") {
     return (
-      <PhoneShell>
-        <h1>Create Smart Account</h1>
-        <p>
-          EOA: <code>{eoa?.slice(0, 6)}…{eoa?.slice(-4)}</code>
-        </p>
-        <button className="btn" onClick={createSmartAccount}>
-          Create Smart Account
-        </button>
-        {message && <p className="msg">{message}</p>}
-      </PhoneShell>
+      <Shell>
+        <Header />
+        <Card>
+          <h2 className="cardTitle">Create Smart Account</h2>
+          <p className="muted">EOA: <code>{eoa?.slice(0,6)}…{eoa?.slice(-4)}</code></p>
+          <Button primary onClick={createSmartAccount}>Create Smart Account</Button>
+          <p className="tiny muted" style={{marginTop:8}}>
+            All actions will be executed by your Smart Account, not by your EOA.
+          </p>
+          {message && <p className="msg">{message}</p>}
+        </Card>
+      </Shell>
     );
   }
 
-  return (
-    <PhoneShell>
-      <h1>TriBalance</h1>
+  const total = Math.max(1, powers.meta + powers.cast + powers.mon);
+  const pct = {
+    meta: Math.round((powers.meta / total) * 100),
+    cast: Math.round((powers.cast / total) * 100),
+    mon: Math.round((powers.mon / total) * 100),
+  };
 
-      <div style={{border:"1px solid #23242a", borderRadius:12, padding:10, marginBottom:12}}>
-        <div>Smart Account: {smartAddr ? (
+  return (
+    <Shell>
+      <Header />
+
+      {/* Smart Account block */}
+      <Card glow>
+        <div className="row">
+          <span className="muted">Smart Account</span>
           <a className="link" href={monadAddressUrl(smartAddr)} target="_blank" rel="noreferrer">
-            {smartAddr.slice(0,6)}…{smartAddr.slice(-4)}
+            {smartAddr ? `${smartAddr.slice(0,6)}…${smartAddr.slice(-4)}` : "—"}
           </a>
-        ) : "—"}</div>
+        </div>
         {lastOpHash && (
-          <div style={{marginTop:6}}>
-            Last userOp:{" "}
+          <div className="row" style={{marginTop:6}}>
+            <span className="muted">Last userOp</span>
             <a className="link" href={userOpTrackUrl(lastOpHash)} target="_blank" rel="noreferrer">
               {lastOpHash.slice(0,10)}…
             </a>
           </div>
         )}
-      </div>
+        <div className="row" style={{marginTop:6}}>
+          <span className="muted">NFT (ERC1155)</span>
+          <code className="addr">{short(NFT_ADDR)}</code>
+        </div>
+        <div className="row">
+          <span className="muted">TriBalance</span>
+          <code className="addr">{short(TRI_ADDR)}</code>
+        </div>
+      </Card>
 
-      <Balance meta={powers.meta} cast={powers.cast} mon={powers.mon} />
+      {/* Balance of powers */}
+      <Card>
+        <h3 className="cardTitle">Balance of Powers</h3>
+        <Bars pct={pct} values={powers} />
+        <div className="chips">
+          {CHOICES.map((c) => (
+            <Chip key={c.id} active={ownedChoice === c.id} color={c.color} glow={c.glow}>
+              <span style={{fontSize:18}}>{c.emoji}</span> {c.label}
+            </Chip>
+          ))}
+        </div>
+      </Card>
 
-      <h3 style={{marginTop:12}}>Vote</h3>
+      {/* Vote */}
+      <SectionTitle>Vote</SectionTitle>
       {CHOICES.map((c) => (
-        <button key={c.id} className="card" disabled={loading || !mmsa} onClick={() => handleVote(c.id)}>
-          <span>{c.emoji}</span> Vote {c.label}
-        </button>
+        <ActionCard key={c.id} label={`Vote ${c.label}`} emoji={c.emoji} color={c.color} glow={c.glow}
+          disabled={loading || !mmsa} onClick={()=>handleVote(c.id)} />
       ))}
 
-      <h3 style={{marginTop:16}}>Mint NFT</h3>
+      {/* Mint */}
+      <SectionTitle>Mint NFT</SectionTitle>
       {CHOICES.map((c) => (
-        <button key={c.id} className="card" disabled={loading || !mmsa} onClick={() => handleMint(c.id)}>
-          <span>{c.emoji}</span> Mint {c.label}
-        </button>
+        <ActionCard key={c.id} label={`Mint ${c.label}`} emoji={c.emoji} color={c.color} glow={c.glow}
+          disabled={loading || !mmsa} onClick={()=>handleMint(c.id)} />
       ))}
 
       {message && <p className="msg">{message}</p>}
-    </PhoneShell>
+
+      <Footer />
+    </Shell>
   );
 }
 
-function PhoneShell({ children }) {
+// ======== UI Primitives ========
+
+function Header() {
+  return (
+    <div className="header">
+      <div className="logoPulse" />
+      <div>
+        <div className="brand">TriBalance</div>
+        <div className="tagline">MetaMask • Farcaster • Monad</div>
+      </div>
+      <style>{headerCss}</style>
+    </div>
+  );
+}
+
+function Footer() {
+  return (
+    <div style={{opacity:0.6, fontSize:12, marginTop:20, textAlign:"center"}}>
+      Built for Monad Mission 8 — Smart Account Voting
+    </div>
+  );
+}
+
+function Shell({ children }) {
   return (
     <div style={{
-      background: "#0b0b0c",
-      color: "#f2f2f2",
       minHeight: "100vh",
-      padding: 24,
-      fontFamily: "Inter, system-ui, sans-serif",
-      maxWidth: 420, margin: "0 auto"
+      background: "radial-gradient(1200px 600px at 50% -10%, rgba(0,255,213,0.08), transparent), radial-gradient(900px 600px at -10% 10%, rgba(168,85,247,0.08), transparent), #0a0b0d",
+      color: "#eaeef7",
+      padding: 18,
+      fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto",
+      maxWidth: 440, margin: "0 auto"
     }}>
       {children}
-      <style>{`
-        .btn {
-          background: #1f5eff;
-          color: #fff;
-          border: none;
-          border-radius: 12px;
-          padding: 14px 20px;
-          font-weight: 600;
-          margin-top: 12px;
-        }
-        .card {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-          background: #16171b;
-          border: 1px solid #2a2b30;
-          border-radius: 12px;
-          padding: 12px 16px;
-          margin-top: 8px;
-          color: #fff;
-          width: 100%;
-        }
-        .link { color: #6ca8ff; text-decoration: none; }
-        .msg { margin-top: 10px; opacity: 0.9; }
-      `}</style>
+      <style>{globalCss}</style>
     </div>
   );
 }
 
-function Balance({ meta, cast, mon }) {
-  const total = Math.max(1, meta + cast + mon);
-  const pct = {
-    meta: Math.round((meta / total) * 100),
-    cast: Math.round((cast / total) * 100),
-    mon: Math.round((mon / total) * 100),
-  };
+function Card({ children, glow }) {
   return (
-    <div style={{ border: "1px solid #23242a", padding: 12, borderRadius: 12, marginBottom: 16 }}>
-      <p>MetaMask {pct.meta}% | Farcaster {pct.cast}% | Monad {pct.mon}%</p>
+    <div className="card" data-glow={glow ? "1" : "0"}>
+      {children}
+      <style>{cardCss}</style>
     </div>
   );
 }
 
-function humanError(e) {
-  return e?.shortMessage || e?.reason || e?.data?.message || e?.message || String(e);
+function Bars({ pct, values }) {
+  return (
+    <div className="barsWrap">
+      <div className="bar">
+        <div className="fill" style={{width: `${pct.meta}%`, background: "linear-gradient(90deg,#ff7a00,#ffc266)"}} />
+        <span className="label">MetaMask {pct.meta}% <small className="tiny">({values.meta})</small></span>
+      </div>
+      <div className="bar">
+        <div className="fill" style={{width: `${pct.cast}%`, background: "linear-gradient(90deg,#8f4df1,#c79bff)"}} />
+        <span className="label">Farcaster {pct.cast}% <small className="tiny">({values.cast})</small></span>
+      </div>
+      <div className="bar">
+        <div className="fill" style={{width: `${pct.mon}%`, background: "linear-gradient(90deg,#00ffd5,#7dffe9)"}} />
+        <span className="label">Monad {pct.mon}% <small className="tiny">({values.mon})</small></span>
+      </div>
+      <style>{barsCss}</style>
+    </div>
+  );
 }
+
+function Chip({ children, active, color, glow }) {
+  return (
+    <span className="chip" data-active={active ? "1" : "0"} style={{borderColor: color, boxShadow: active ? `0 0 24px ${glow}` : "none"}}>
+      {children}
+      <style>{chipCss}</style>
+    </span>
+  );
+}
+
+function SectionTitle({ children }) {
+  return <h3 className="section">{children}<style>{sectionCss}</style></h3>;
+}
+
+function Button({ children, primary, onClick, disabled }) {
+  return (
+    <button className="btn" data-primary={primary ? "1" : "0"} onClick={onClick} disabled={disabled}>
+      {children}
+      <style>{buttonCss}</style>
+    </button>
+  );
+}
+
+function ActionCard({ label, emoji, color, glow, onClick, disabled }) {
+  return (
+    <button className="action" onClick={onClick} disabled={disabled} style={{borderColor: color, boxShadow: `inset 0 0 0 1px ${color}40, 0 0 24px ${glow}`}}>
+      <span className="em">{emoji}</span>
+      <span>{label}</span>
+      <style>{actionCss}</style>
+    </button>
+  );
+}
+
+// ======== Styles ========
+
+const globalCss = `
+.title { font-size: 38px; font-weight: 800; letter-spacing: .5px; margin: 6px 0 4px; }
+.muted { opacity: .75 }
+.msg { margin-top: 10px; opacity: .9 }
+.link { color: #79b7ff; text-decoration: none; }
+.tiny { font-size: 12px }
+.row { display:flex; justify-content:space-between; align-items:center; gap:10px }
+.addr { opacity:.75 }
+`;
+
+const headerCss = `
+.header { display:flex; gap:12px; align-items:center; margin: 8px 0 16px; }
+.brand { font-weight: 800; font-size: 22px; letter-spacing: .3px; }
+.tagline { opacity:.6; font-size:12px; margin-top:2px }
+.logoPulse{ width:14px; height:14px; border-radius:50%; background: radial-gradient(circle at 30% 30%, #00ffd5, #725bff); box-shadow: 0 0 18px rgba(0,255,213,.6), 0 0 30px rgba(114,91,255,.35); animation: pulse 2.2s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{ transform: scale(1); opacity: .9 } 50%{ transform: scale(1.25); opacity: 1 } }
+`;
+
+const cardCss = `
+.card { background: rgba(19,22,28,.75); border: 1px solid #2a2e36; border-radius:16px; padding: 14px 14px; margin: 12px 0; backdrop-filter: blur(6px); }
+.card[data-glow="1"]{ box-shadow: 0 0 0 1px rgba(124,132,255,.08), 0 0 30px rgba(124,132,255,.1) inset; }
+.cardTitle { margin:0 0 8px; font-weight:700; }
+.chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px }
+`;
+
+const barsCss = `
+.barsWrap { display:flex; flex-direction:column; gap:10px; }
+.bar { position:relative; background:#0f1216; border:1px solid #242833; border-radius:12px; overflow:hidden; height:36px; }
+.bar .fill { position:absolute; left:0; top:0; bottom:0; border-radius:12px; transition: width .6s ease; }
+.bar .label { position:relative; z-index:2; height:100%; display:flex; align-items:center; justify-content:center; font-weight:600; letter-spacing:.2px; }
+`;
+
+const chipCss = `
+.chip { border:1px solid #39404f; padding:6px 10px; border-radius:999px; font-size:12px; display:inline-flex; align-items:center; gap:6px; transition: all .25s ease; }
+.chip[data-active="1"]{ background: rgba(255,255,255,.03); transform: translateY(-1px); }
+`;
+
+const sectionCss = `
+.section { margin: 16px 0 10px; font-weight:800; letter-spacing:.4px; }
+`;
+
+const buttonCss = `
+.btn { border:none; border-radius:12px; padding: 12px 16px; font-weight:700; cursor:pointer; }
+.btn[data-primary="1"]{ background: linear-gradient(90deg,#4666ff,#7fb1ff); color:white; box-shadow: 0 10px 30px rgba(70,102,255,.25); }
+.btn[disabled]{ opacity:.6; cursor:not-allowed }
+`;
+
+const actionCss = `
+.action { width:100%; text-align:left; display:flex; align-items:center; gap:10px; background: rgba(20,22,27,.8); border:1px solid #2a2e36; border-radius:14px; padding:14px 16px; margin-top:8px; color: #eaeef7; cursor:pointer; transition: transform .15s ease, background .2s, box-shadow .3s; }
+.action .em { font-size:18px; }
+.action:hover { transform: translateY(-1px); background: rgba(25,28,35,.85); }
+.action:disabled{ opacity:.6; cursor:not-allowed; transform:none; }
+`;
+
+// ===== Utils =====
+function short(a){ return `${a.slice(0,6)}…${a.slice(-4)}`; }
+function humanError(e){ return e?.shortMessage || e?.reason || e?.data?.message || e?.message || String(e); }
