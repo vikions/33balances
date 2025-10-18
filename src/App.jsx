@@ -1,30 +1,30 @@
 import { useEffect, useState } from "react";
 import { ethers } from "ethers";
-import { parseAbi } from "viem";
+import { parseAbi, encodeFunctionData } from "viem";
 import {
   initSmartAccount,
-  makeCalldata,
-  sendCalls,
+  sendCalls,           // твой helper; calldata собираем сами через viem
   userOpTrackUrl,
   monadAddressUrl,
 } from "./smartAccount";
 import { getEip1193Provider } from "./fcProvider";
 
 const RPC = import.meta.env.VITE_MONAD_RPC;
-const NFT_ADDR = import.meta.env.VITE_NFT; // 0xECaAae12aaC2ea51303E69131CbEA164194e5AB8
-const TRI_ADDR = import.meta.env.VITE_TRI; // 0x78Ff4576bd6D85542EF5aabf83575d4c27082C1A
+const NFT_ADDR = ethers.getAddress(import.meta.env.VITE_NFT); // 0xECaAae12aaC2ea51303E69131CbEA164194e5AB8
+const TRI_ADDR = ethers.getAddress(import.meta.env.VITE_TRI); // 0x78Ff4576bd6D85542EF5aabf83575d4c27082C1A
 
-// === ВАЖНО: Укажите точные сигнатуры функций вашего контракта ===
-// По логу видно, что mint принимает address + uint (адрес SA шёл первым параметром).
-// Если у вас иначе — просто поправьте эти две строки:
-const MINT_SIG = "function mint(address to, uint256 choice)"; // <- замените при необходимости
-const VOTE_SIG = "function vote(uint256 choice)";             // <- замените при необходимости
+// ==== УКАЖИ ТОЧНЫЕ СИГНАТУРЫ КАК В ТВОИХ .sol ====
+// Если в NFT: mint(uint256 choice) — оставь так.
+// Если у тебя mint(address to, uint256 choice) — замени строку ниже.
+const MINT_SIG = "function mint(uint256 choice)";
+// Если в TRI: vote(uint8 choice) — замени uint256 на uint8.
+const VOTE_SIG = "function vote(uint256 choice)";
 
-// viem ABI для calldata
+// viem ABI — только нужные методы
 const NFT_ABI_VIEM = parseAbi([MINT_SIG]);
 const TRI_ABI_VIEM = parseAbi([VOTE_SIG]);
 
-// ethers ABI для чтения (минимум, можно расширять)
+// ethers ABI для чтения
 const NFT_ABI = [
   "function hasMinted(address) view returns (bool)",
   "function balanceOf(address,uint256) view returns (uint256)",
@@ -42,22 +42,22 @@ const CHOICES = [
 ];
 
 export default function App() {
-  const [provider, setProvider] = useState(null);           // BrowserProvider (Farcaster)
-  const [readProvider, setReadProvider] = useState(null);   // JsonRpcProvider (RPC)
+  const [provider, setProvider] = useState(null);         // BrowserProvider (Farcaster)
+  const [readProvider, setReadProvider] = useState(null); // JsonRpcProvider (RPC)
   const [eoa, setEoa] = useState(null);
-  const [mmsa, setMmsa] = useState(null);
+  const [mmsa, setMmsa] = useState(null);                 // { smartAccount, bundler, paymaster, address }
   const [smartAddr, setSmartAddr] = useState(null);
   const [lastOpHash, setLastOpHash] = useState(null);
   const [powers, setPowers] = useState({ meta: 0, cast: 0, mon: 0 });
   const [message, setMessage] = useState("");
-  const [screen, setScreen] = useState("connect"); // connect -> createSA -> app
+  const [screen, setScreen] = useState("connect");        // connect -> createSA -> app
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     setReadProvider(new ethers.JsonRpcProvider(RPC));
   }, []);
 
-  // --- helpers ---
+  // ---------- helpers ----------
   async function getContracts({ withSigner = true, readOnly = false } = {}) {
     const providerToUse =
       readOnly || !provider ? (readProvider ?? new ethers.JsonRpcProvider(RPC)) : provider;
@@ -113,7 +113,7 @@ export default function App() {
     }
   }
 
-  // Подключаем Farcaster Wallet (EOA)
+  // ---------- wallet / SA ----------
   async function connectWallet() {
     try {
       setMessage("Connecting Farcaster Wallet...");
@@ -131,11 +131,10 @@ export default function App() {
     }
   }
 
-  // Создаём MetaMask Smart Account
   async function createSmartAccount() {
     try {
       setMessage("Creating Smart Account...");
-      const ctx = await initSmartAccount(); // { smartAccount, bundler, paymaster, address }
+      const ctx = await initSmartAccount();
       setMmsa(ctx);
       setSmartAddr(ctx.address);
       setMessage("✅ Smart Account created!");
@@ -146,20 +145,54 @@ export default function App() {
     }
   }
 
-  // === Минт строго по правилам ===
+  // ---------- calldata builders ----------
+  function buildMintCalldata(choice, toAddr) {
+    // Если твой контракт: mint(address to, uint256 choice)
+    //   — замени MINT_SIG и раскомментируй ветку ниже.
+    if (MINT_SIG.includes("(address")) {
+      return encodeFunctionData({
+        abi: NFT_ABI_VIEM,
+        functionName: "mint",
+        args: [toAddr, BigInt(choice)],
+      });
+    }
+    // По умолчанию mint(uint256 choice)
+    return encodeFunctionData({
+      abi: NFT_ABI_VIEM,
+      functionName: "mint",
+      args: [BigInt(choice)],
+    });
+  }
+
+  function buildVoteCalldata(choice) {
+    return encodeFunctionData({
+      abi: TRI_ABI_VIEM,
+      functionName: "vote",
+      args: [BigInt(choice)],
+    });
+  }
+
+  function debugSelector(label, to, data) {
+    const selector = data.slice(0, 10);
+    console.debug(`[calldata] ${label} → ${to} | selector=${selector} | len=${data.length}`);
+  }
+
+  // ---------- actions ----------
   async function handleMint(choice) {
     if (!mmsa) return setMessage("Create Smart Account first");
     setLoading(true);
     setMessage("");
     setLastOpHash(null);
     try {
-      // если этот SA уже использовал минт — не пытаемся снова
+      // защита от повтора
       if (await hasMinted(mmsa.address)) {
         const owned = await getOwnedChoice(mmsa.address);
         if (owned === null) {
-          setMessage("Этот Smart Account уже исчерпал право минта, но не держит нужный Proof. Вероятно, минтили другим адресом.");
+          setMessage("Этот Smart Account уже исчерпал право минта, но Proof не найден. Возможно, минтили другим адресом.");
+        } else if (owned === choice) {
+          setMessage("You already minted this Proof ✅");
         } else {
-          setMessage("You already minted this or another Proof ✅");
+          setMessage(`Already minted another Proof (choice=${owned}). Use that Proof or new SA.`);
         }
         return;
       }
@@ -169,17 +202,15 @@ export default function App() {
         if (owned === choice) {
           setMessage("You already minted this Proof ✅");
         } else {
-          setMessage(`Already minted another Proof (choice=${owned}). Use that Proof or new account.`);
+          setMessage(`Already minted another Proof (choice=${owned}).`);
         }
         return;
       }
 
-      // под вашу сигнатуру MINT_SIG
-      const data = makeCalldata(NFT_ABI_VIEM, "mint", MINT_SIG.includes("(address")
-        ? [mmsa.address, choice]
-        : [choice]
-      );
+      const data = buildMintCalldata(choice, mmsa.address);
+      debugSelector("mint@NFT", NFT_ADDR, data);
 
+      // Минтим ТОЛЬКО на NFT_ADDR
       const { hash } = await sendCalls(mmsa, { to: NFT_ADDR, data });
       setLastOpHash(hash);
       setMessage("✅ NFT minted!");
@@ -190,7 +221,6 @@ export default function App() {
     }
   }
 
-  // === Голос строго по правилам ===
   async function handleVote(choice) {
     if (!mmsa) return setMessage("Create Smart Account first");
     setLoading(true);
@@ -204,9 +234,11 @@ export default function App() {
       }
 
       const owned = await getOwnedChoice(mmsa.address);
-
       if (owned === choice) {
-        const data = makeCalldata(TRI_ABI_VIEM, "vote", [choice]);
+        const data = buildVoteCalldata(choice);
+        debugSelector("vote@TRI", TRI_ADDR, data);
+
+        // Голосуем ТОЛЬКО в TRI_ADDR
         const { hash } = await sendCalls(mmsa, { to: TRI_ADDR, data });
         setLastOpHash(hash);
         setMessage("✅ Vote cast!");
@@ -215,12 +247,13 @@ export default function App() {
       }
 
       if (owned === null) {
-        // нет Proof — СНАЧАЛА mint, затем vote (две операции, но последовательно)
+        // нет Proof — сначала mint, потом vote
         await handleMint(choice);
-        if (message && message.startsWith("❌")) return;
 
         // после успешного минта — голосуем
-        const data = makeCalldata(TRI_ABI_VIEM, "vote", [choice]);
+        const data = buildVoteCalldata(choice);
+        debugSelector("vote@TRI", TRI_ADDR, data);
+
         const { hash } = await sendCalls(mmsa, { to: TRI_ADDR, data });
         setLastOpHash(hash);
         setMessage("✅ Minted & Voted!");
@@ -228,7 +261,7 @@ export default function App() {
         return;
       }
 
-      setMessage(`This Smart Account owns a different Proof (choice=${owned}). You can only vote with that Proof.`);
+      setMessage(`This Smart Account owns a different Proof (choice=${owned}). Vote with that Proof.`);
     } catch (e) {
       setMessage(humanError(e));
     } finally {
@@ -236,7 +269,7 @@ export default function App() {
     }
   }
 
-  // === Авто-голос одним userOp (батч mint+vote через SA) ===
+  // Один userOp: mint+vote батчом (если нет Proof)
   async function handleAutoVote(choice) {
     if (!mmsa) return setMessage("Create Smart Account first");
     setLoading(true);
@@ -251,7 +284,9 @@ export default function App() {
 
       const owned = await getOwnedChoice(mmsa.address);
       if (owned === choice) {
-        const voteData = makeCalldata(TRI_ABI_VIEM, "vote", [choice]);
+        const voteData = buildVoteCalldata(choice);
+        debugSelector("vote@TRI", TRI_ADDR, voteData);
+
         const { hash } = await sendCalls(mmsa, [{ to: TRI_ADDR, data: voteData }]);
         setLastOpHash(hash);
         setMessage("✅ Vote cast by Smart Account!");
@@ -260,19 +295,17 @@ export default function App() {
       }
 
       if (owned === null) {
-        // если право минта уже исчерпано этим SA — не пробуем
         if (await hasMinted(mmsa.address)) {
           setMessage("Этот Smart Account уже использовал право минта. Создайте новый SA или голосуйте тем, что держит Proof.");
           return;
         }
 
-        const mintData = makeCalldata(NFT_ABI_VIEM, "mint", MINT_SIG.includes("(address")
-          ? [mmsa.address, choice]
-          : [choice]
-        );
-        const voteData = makeCalldata(TRI_ABI_VIEM, "vote", [choice]);
+        const mintData = buildMintCalldata(choice, mmsa.address);
+        const voteData = buildVoteCalldata(choice);
+        debugSelector("mint@NFT", NFT_ADDR, mintData);
+        debugSelector("vote@TRI", TRI_ADDR, voteData);
 
-        // ВАЖНО: один userOp, массив calls
+        // ВАЖНО: именно эти адреса
         const { hash } = await sendCalls(mmsa, [
           { to: NFT_ADDR, data: mintData },
           { to: TRI_ADDR, data: voteData },
@@ -295,7 +328,7 @@ export default function App() {
     loadPowers();
   }, [readProvider]);
 
-  // === UI ===
+  // ---------- UI ----------
   if (screen === "connect") {
     return (
       <PhoneShell>
