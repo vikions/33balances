@@ -41,13 +41,11 @@ async function ensureMonadChain(eip1193) {
   if (current === targetHex) return;
 
   try {
-    // пробуем просто переключиться
     await eip1193.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: targetHex }],
     });
   } catch (err) {
-    // если сети нет в кошельке — добавляем и сразу переключаемся
     if (err?.code === 4902 /* Chain not added */) {
       await eip1193.request({
         method: "wallet_addEthereumChain",
@@ -73,7 +71,7 @@ export async function initSmartAccount() {
   // 1) Farcaster provider
   const eip1193 = await getEip1193Provider();
 
-  // 2) Делаем СРАЗУ переключение сети на Monad Testnet
+  // 2) Переключаем сеть на Monad Testnet
   await ensureMonadChain(eip1193);
 
   // 3) Готовим EOA/WalletClient на правильной сети
@@ -101,18 +99,16 @@ export async function initSmartAccount() {
     chain: monadTestnet,
   });
 
-  // 5) Проверяем — есть ли байткод по адресу SA
+  // 5) Проверяем — есть ли байткод по адресу SA; если нет — деплоим через factory
   const code = await publicClient.getCode({ address: smartAccount.address });
 
   if (!code || code === "0x") {
-    // 5a) Если нет — деплоим вручную (EOA подпишет одну tx)
     const { factory, factoryData } = await smartAccount.getFactoryArgs();
     const txHash = await walletClient.sendTransaction({ to: factory, data: factoryData });
     const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
     if (receipt.status !== "success") throw new Error("Smart Account deployment failed");
     smartAccount.initCode = "0x";
   } else {
-    // 5b) Уже развернут — initCode не нужен
     smartAccount.initCode = "0x";
   }
 
@@ -137,11 +133,33 @@ export function makeCalldata(abi, fn, args) {
   return encodeFunctionData({ abi, functionName: fn, args });
 }
 
+/* === НОВОЕ: берём актуальные gas prices у Pimlico === */
+async function getPimlicoGas(bundler) {
+  // если метод доступен на клиенте — используем его
+  if (typeof bundler.getUserOperationGasPrice === "function") {
+    const { maxFeePerGas, maxPriorityFeePerGas } =
+      await bundler.getUserOperationGasPrice();
+    return {
+      maxFeePerGas: BigInt(maxFeePerGas),
+      maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas),
+    };
+  }
+  // fallback: raw RPC
+  const resp = await bundler.request({
+    method: "pimlico_getUserOperationGasPrice",
+    params: [],
+  });
+  return {
+    maxFeePerGas: BigInt(resp.maxFeePerGas),
+    maxPriorityFeePerGas: BigInt(resp.maxPriorityFeePerGas),
+  };
+}
+
 export async function sendCalls(ctx, { to, data, value = 0n }) {
   const { bundler, smartAccount, paymaster } = ctx;
 
-  const maxFeePerGas = 1n;
-  const maxPriorityFeePerGas = 1n;
+  // 👉 ключевое: берём валидные значения газа у Pimlico
+  const { maxFeePerGas, maxPriorityFeePerGas } = await getPimlicoGas(bundler);
 
   const hash = await bundler.sendUserOperation({
     account: smartAccount,
