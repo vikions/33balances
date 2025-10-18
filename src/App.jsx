@@ -303,10 +303,10 @@ export default function App() {
         </div>
       </Card>
 
-      {/* Balance of powers */}
+      {/* Balance of powers — КРУГОВОЙ ВАРИАНТ */}
       <Card>
         <h3 className="cardTitle">Balance of Powers</h3>
-        <Bars pct={pct} values={powers} />
+        <FlowRings pct={pct} values={powers} />
         <div className="chips">
           {CHOICES.map((c) => (
             <Chip key={c.id} active={ownedChoice === c.id} color={c.color} glow={c.glow}>
@@ -385,22 +385,105 @@ function Card({ children, glow }) {
   );
 }
 
-function Bars({ pct, values }) {
+/* === НОВОЕ: Круговой “переливающийся” баланс === */
+function FlowRings({ pct, values }) {
+  const [anim, setAnim] = useState({ meta: 0, cast: 0, mon: 0 });
+
+  useEffect(() => {
+    let raf;
+    const start = performance.now();
+    const from = { ...anim };
+    const to = { meta: pct.meta, cast: pct.cast, mon: pct.mon };
+    const tick = (t) => {
+      const k = Math.min(1, (t - start) / 600);
+      const e = 1 - Math.pow(1 - k, 3);
+      setAnim({
+        meta: from.meta + (to.meta - from.meta) * e,
+        cast: from.cast + (to.cast - from.cast) * e,
+        mon:  from.mon  + (to.mon  - from.mon)  * e,
+      });
+      if (k < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pct.meta, pct.cast, pct.mon]);
+
+  const rings = [
+    { key: 'meta', color1: '#ff7a00', color2: '#ffc266', radius: 88, width: 12, label: `MetaMask ${Math.round(anim.meta)}%`, value: values.meta },
+    { key: 'cast', color1: '#8f4df1', color2: '#c79bff', radius: 68, width: 12, label: `Farcaster ${Math.round(anim.cast)}%`, value: values.cast },
+    { key: 'mon',  color1: '#00ffd5', color2: '#7dffe9', radius: 48, width: 12, label: `Monad ${Math.round(anim.mon)}%`, value: values.mon  },
+  ];
+
   return (
-    <div className="barsWrap">
-      <div className="bar">
-        <div className="fill" style={{width: `${pct.meta}%`, background: "linear-gradient(90deg,#ff7a00,#ffc266)"}} />
-        <span className="label">MetaMask {pct.meta}% <small className="tiny">({values.meta})</small></span>
+    <div className="flowWrap">
+      <svg viewBox="0 0 240 240" className="flowSvg" aria-hidden>
+        <defs>
+          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        <g className="halo">
+          <circle cx="120" cy="120" r="92" fill="none" stroke="url(#gradHalo)" strokeWidth="20" opacity="0.12" />
+          <defs>
+            <linearGradient id="gradHalo" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stopColor="#00ffd5" />
+              <stop offset="50%" stopColor="#a855f7" />
+              <stop offset="100%" stopColor="#ff7a00" />
+            </linearGradient>
+          </defs>
+        </g>
+
+        {rings.map((r) => {
+          const C = 2 * Math.PI * r.radius;
+          const pctVal = Math.max(0, Math.min(100, anim[r.key]));
+          const dash = (C * pctVal) / 100;
+          const gap  = C - dash;
+          return (
+            <g key={r.key} filter="url(#glow)">
+              <circle cx="120" cy="120" r={r.radius} fill="none" stroke="#101319" strokeWidth={r.width} />
+              <circle
+                cx="120" cy="120" r={r.radius} fill="none"
+                stroke={`url(#grad-${r.key})`} strokeWidth={r.width}
+                strokeLinecap="round" strokeDasharray={`${dash} ${gap}`}
+                transform="rotate(-90 120 120)"
+                className="ringStroke"
+              />
+              <defs>
+                <linearGradient id={`grad-${r.key}`} x1="0%" y1="0%" x2="100%" y2="0%">
+                  <stop offset="0%" stopColor={r.color1} />
+                  <stop offset="100%" stopColor={r.color2} />
+                </linearGradient>
+              </defs>
+            </g>
+          );
+        })}
+
+        <g className="centerText">
+          <text x="120" y="110" textAnchor="middle" fontSize="22" fontWeight="800" fill="#eaeef7">
+            {Math.max(pct.meta, pct.cast, pct.mon)}%
+          </text>
+          <text x="120" y="132" textAnchor="middle" fontSize="12" fill="#9aa4b2" letterSpacing=".3px">
+            network balance
+          </text>
+        </g>
+      </svg>
+
+      <div className="ringLabels">
+        {rings.map((r)=>(
+          <div key={r.key} className="labelRow">
+            <span className="dot" style={{background: r.color1, boxShadow:`0 0 10px ${r.color1}55`}} />
+            <span className="lbl">{r.label} <span className="count">({r.value})</span></span>
+          </div>
+        ))}
       </div>
-      <div className="bar">
-        <div className="fill" style={{width: `${pct.cast}%`, background: "linear-gradient(90deg,#8f4df1,#c79bff)"}} />
-        <span className="label">Farcaster {pct.cast}% <small className="tiny">({values.cast})</small></span>
-      </div>
-      <div className="bar">
-        <div className="fill" style={{width: `${pct.mon}%`, background: "linear-gradient(90deg,#00ffd5,#7dffe9)"}} />
-        <span className="label">Monad {pct.mon}% <small className="tiny">({values.mon})</small></span>
-      </div>
-      <style>{barsCss}</style>
+
+      <style>{flowCss}</style>
     </div>
   );
 }
@@ -464,13 +547,6 @@ const cardCss = `
 .chips { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px }
 `;
 
-const barsCss = `
-.barsWrap { display:flex; flex-direction:column; gap:10px; }
-.bar { position:relative; background:#0f1216; border:1px solid #242833; border-radius:12px; overflow:hidden; height:36px; }
-.bar .fill { position:absolute; left:0; top:0; bottom:0; border-radius:12px; transition: width .6s ease; }
-.bar .label { position:relative; z-index:2; height:100%; display:flex; align-items:center; justify-content:center; font-weight:600; letter-spacing:.2px; }
-`;
-
 const chipCss = `
 .chip { border:1px solid #39404f; padding:6px 10px; border-radius:999px; font-size:12px; display:inline-flex; align-items:center; gap:6px; transition: all .25s ease; }
 .chip[data-active="1"]{ background: rgba(255,255,255,.03); transform: translateY(-1px); }
@@ -491,6 +567,21 @@ const actionCss = `
 .action .em { font-size:18px; }
 .action:hover { transform: translateY(-1px); background: rgba(25,28,35,.85); }
 .action:disabled{ opacity:.6; cursor:not-allowed; transform:none; }
+`;
+
+/* === НОВОЕ: стили для FlowRings === */
+const flowCss = `
+.flowWrap { display:flex; flex-direction:column; align-items:center; gap:12px; }
+.flowSvg { width: 100%; max-width: 320px; height: auto; }
+.ringStroke { transition: stroke-dasharray .6s ease; }
+.halo { animation: spin 12s linear infinite; transform-origin: 120px 120px; }
+.centerText text { paint-order: stroke fill; stroke: rgba(0,0,0,.2); stroke-width: .6px; }
+@keyframes spin { from{transform: rotate(0deg);} to{transform: rotate(360deg);} }
+.ringLabels { width:100%; display:flex; flex-direction:column; gap:6px; margin-top:4px; }
+.labelRow { display:flex; align-items:center; gap:8px; font-size:13px; }
+.labelRow .dot { width:10px; height:10px; border-radius:50%; }
+.labelRow .lbl { opacity:.9 }
+.labelRow .count { opacity:.6; font-size:12px; }
 `;
 
 // ===== Utils =====
