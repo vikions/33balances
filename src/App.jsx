@@ -9,8 +9,8 @@ import {
 import { getEip1193Provider } from "./fcProvider";
 
 const RPC = import.meta.env.VITE_MONAD_RPC;
-const NFT_ADDR = ethers.getAddress(import.meta.env.VITE_NFT); // 0xECaAae12aaC2ea51303E69131CbEA164194e5AB8 (ERC1155)
-const TRI_ADDR = ethers.getAddress(import.meta.env.VITE_TRI); // 0xD0c58c16a0807D386465dd4670CB40914115A69F
+const NFT_ADDR = ethers.getAddress(import.meta.env.VITE_NFT);
+const TRI_ADDR = ethers.getAddress(import.meta.env.VITE_TRI);
 
 // === Сигнатуры КАК В СОЛИДИТИ ===
 const MINT_SIG = "function mint(uint8 choice)";
@@ -38,8 +38,8 @@ const CHOICES = [
 ];
 
 export default function App() {
-  const [provider, setProvider] = useState(null);         // BrowserProvider (Farcaster)
-  const [readProvider, setReadProvider] = useState(null); // JsonRpcProvider (RPC)
+  const [provider, setProvider] = useState(null);         // BrowserProvider (Farcaster) — ТОЛЬКО для SA
+  const [readProvider, setReadProvider] = useState(null); // JsonRpcProvider (RPC) — ТОЛЬКО для чтения
   const [eoa, setEoa] = useState(null);
   const [mmsa, setMmsa] = useState(null);                 // { smartAccount, bundler, paymaster, address }
   const [smartAddr, setSmartAddr] = useState(null);
@@ -49,30 +49,24 @@ export default function App() {
   const [screen, setScreen] = useState("connect");        // connect -> createSA -> app
   const [loading, setLoading] = useState(false);
 
+  // Инициализируем read RPC-провайдер один раз
   useEffect(() => {
     setReadProvider(new ethers.JsonRpcProvider(RPC));
   }, []);
 
-  // ---------- helpers ----------
-  async function getContracts({ withSigner = true, readOnly = false } = {}) {
-    const providerToUse =
-      readOnly || !provider ? (readProvider ?? new ethers.JsonRpcProvider(RPC)) : provider;
-
-    let signer = null;
-    if (withSigner && provider instanceof ethers.BrowserProvider) {
-      signer = await provider.getSigner();
-    }
-
-    const nft = new ethers.Contract(NFT_ADDR, NFT_ABI, signer || providerToUse);
-    const tri = new ethers.Contract(TRI_ADDR, TRI_ABI, signer || providerToUse);
+  // ===== READ-ONLY КОНТРАКТЫ (всегда через RPC!) =====
+  function getReadContracts() {
+    const rp = readProvider ?? new ethers.JsonRpcProvider(RPC);
+    const nft = new ethers.Contract(NFT_ADDR, NFT_ABI, rp);
+    const tri = new ethers.Contract(TRI_ADDR, TRI_ABI, rp);
     return { nft, tri };
   }
 
+  // ---------- helpers (только чтение через RPC) ----------
   async function getOwnedChoice(addr) {
-    const { nft } = await getContracts({ readOnly: true });
+    const { nft } = getReadContracts();
     for (const c of CHOICES) {
       const bal = await nft.balanceOf(addr, c.id);
-      // ethers v6 -> bigint
       if (bal && bal !== 0n) return c.id;
     }
     return null;
@@ -80,7 +74,7 @@ export default function App() {
 
   async function hasMinted(addr) {
     try {
-      const { nft } = await getContracts({ readOnly: true });
+      const { nft } = getReadContracts();
       return await nft.hasMinted(addr);
     } catch {
       return false;
@@ -89,7 +83,7 @@ export default function App() {
 
   async function getCooldownLeft(addr) {
     try {
-      const { tri } = await getContracts({ readOnly: true });
+      const { tri } = getReadContracts();
       const last = BigInt(await tri.lastVoteAt(addr));
       const cd = BigInt(await tri.voteCooldown());
       const now = BigInt(Math.floor(Date.now() / 1000));
@@ -102,7 +96,8 @@ export default function App() {
 
   async function loadPowers() {
     try {
-      const { tri } = await getContracts({ readOnly: true });
+      if (!readProvider) return;
+      const { tri } = getReadContracts();
       const [m, c, n] = await tri.globalPowers();
       setPowers({ meta: Number(m), cast: Number(c), mon: Number(n) });
     } catch (e) {
@@ -136,7 +131,8 @@ export default function App() {
       setSmartAddr(ctx.address);
       setMessage("✅ Smart Account created!");
       setScreen("app");
-      await loadPowers();
+      // подождём пока readProvider инициализируется
+      setTimeout(loadPowers, 100);
     } catch (e) {
       setMessage(humanError(e));
     }
@@ -160,7 +156,6 @@ export default function App() {
   }
 
   async function sendOne(to, data, value = 0n) {
-    // используем bundler из mmsa (см. smartAccount.js)
     const { bundler, smartAccount, paymaster } = mmsa;
     const hash = await bundler.sendUserOperation({
       account: smartAccount,
@@ -257,7 +252,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    loadPowers();
+    if (readProvider) loadPowers();
   }, [readProvider]);
 
   // ---------- UI ----------
