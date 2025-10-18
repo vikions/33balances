@@ -27,19 +27,20 @@ const BUNDLER_URL =
 
 if (!PIMLICO_API_KEY) throw new Error("Missing VITE_PIMLICO_API_KEY");
 
-// EntryPoint (v0.7 для Monad testnet)
-export const ENTRY_POINT_V07 =
-  "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
+// === EntryPoint для Monad ===
+export const ENTRY_POINT_V07 = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 
-// === Клиент для публичных запросов ===
 export function makePublicClient() {
-  return createPublicClient({ chain: monadTestnet, transport: http(RPC) });
+  return createPublicClient({
+    chain: monadTestnet,
+    transport: http(RPC),
+  });
 }
 
 export async function initSmartAccount() {
   const eip1193 = await getEip1193Provider();
 
-  // EOA (Farcaster wallet)
+  // === EOA (Farcaster / MetaMask signer)
   const tmpClient = createWalletClient({
     chain: monadTestnet,
     transport: custom(eip1193),
@@ -54,7 +55,7 @@ export async function initSmartAccount() {
 
   const publicClient = makePublicClient();
 
-  // === MetaMask Smart Account ===
+  // === создаём MetaMask Smart Account
   const smartAccount = await toMetaMaskSmartAccount({
     client: publicClient,
     implementation: Implementation.Hybrid,
@@ -64,41 +65,37 @@ export async function initSmartAccount() {
     chain: monadTestnet,
   });
 
-  // === Bundler ===
+  // === ФИКС: если аккаунт уже задеплоен — убираем initCode
+  const deployedCode = await publicClient.getCode({ address: smartAccount.address });
+  if (deployedCode && deployedCode !== "0x") {
+    console.log("Smart account already deployed, skipping initCode");
+    smartAccount.initCode = "0x";
+  }
+
+  // === создаём Bundler и Paymaster (оба Pimlico)
   const bundler = createBundlerClient({
     client: publicClient,
     entryPoint: ENTRY_POINT_V07,
     transport: http(BUNDLER_URL),
   });
 
-  // === Paymaster ===
   const paymaster = createPaymasterClient({
     chain: monadTestnet,
-    transport: http(
-      `https://api.pimlico.io/v2/${PIMLICO_CHAIN}/rpc?apikey=${PIMLICO_API_KEY}`
-    ),
+    transport: http(BUNDLER_URL),
   });
 
-  return {
-    smartAccount,
-    bundler,
-    paymaster,
-    address: smartAccount.address,
-  };
+  return { smartAccount, bundler, paymaster, address: smartAccount.address };
 }
 
-// === Кодировщик calldata ===
 export function makeCalldata(abi, fn, args) {
   return encodeFunctionData({ abi, functionName: fn, args });
 }
 
-/**
- * Простой путь — как в гайдах Pimlico:
- * используем bundler.sendUserOperation(), передавая paymaster прямо в параметры.
- */
+// === простой способ отправить AA-транзакцию
 export async function sendCalls(ctx, { to, data, value = 0n }) {
   const { bundler, smartAccount, paymaster } = ctx;
 
+  // минимальные значения, чтобы избежать бинарного поиска газа
   const maxFeePerGas = 1n;
   const maxPriorityFeePerGas = 1n;
 
@@ -107,7 +104,7 @@ export async function sendCalls(ctx, { to, data, value = 0n }) {
     calls: [{ to, data, value }],
     maxFeePerGas,
     maxPriorityFeePerGas,
-    paymaster, // просто передаём paymasterClient
+    paymaster, // передаём paymasterClient
   });
 
   return { hash };
