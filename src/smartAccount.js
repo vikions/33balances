@@ -10,7 +10,7 @@ import {
   createBundlerClient,
   createPaymasterClient,
 } from "viem/account-abstraction";
-import { monadTestnet } from "./chain"; // <-- тут больше не нужен EP_v06
+import { monadTestnet } from "./chain";
 import {
   Implementation,
   toMetaMaskSmartAccount,
@@ -35,13 +35,10 @@ export function makePublicClient() {
   return createPublicClient({ chain: monadTestnet, transport: http(RPC) });
 }
 
-// консервативные, но рабочие подсказки по газу, чтобы бандлер не делал бинарный поиск
+// Консервативные подсказки по газу (чтобы избежать binarySearchCallGas)
 const GAS_HINTS = {
-  // कॉल-газ на сам вызов контракта
-  callGasLimit:          400_000n,
-  // верификация подписи/аккаунта
+  callGasLimit:         400_000n,
   verificationGasLimit: 1_300_000n,
-  // «наружные» расходы; лучше не ставить 0
   preVerificationGas:   110_000n,
 };
 
@@ -73,7 +70,7 @@ export async function initSmartAccount() {
     chain: monadTestnet,
   });
 
-  // Bundler (EP v0.7 — один единственный путь)
+  // Bundler (EP v0.7)
   const bundler = createBundlerClient({
     client: publicClient,
     entryPoint: ENTRY_POINT_V07,
@@ -101,28 +98,29 @@ export function makeCalldata(abi, fn, args) {
 }
 
 /**
- * Отправка одиночного call как SPONSORED userOp для EP v0.7:
- * 1) готовим userOp c подсказками по газу,
- * 2) просим у paymaster спонсорство (sponsorUserOperation),
- * 3) отправляем готовый userOp в бандлер.
+ * Отправка одного call как SPONSORED userOp (EP v0.7):
+ * 1) bundler.prepareUserOperation({ account, calls, ...gasHints })
+ * 2) paymaster.sponsorUserOperation({ userOperation, entryPoint })
+ * 3) bundler.sendUserOperation({ userOperation: { ...uo, ...sponsorship } })
  */
 export async function sendCalls(ctx, { to, data, value = 0n }) {
-  const { smartAccount, paymaster, bundler } = ctx;
+  const { smartAccount, bundler, paymaster } = ctx;
 
-  // 1. Собираем userOp сами (ключевой фикс!) с газ-хинтами
-  const uo = await smartAccount.prepareUserOperation({
+  // 1) готовим userOp на бандлере
+  const uo = await bundler.prepareUserOperation({
+    account: smartAccount,
     calls: [{ to, data, value }],
     ...GAS_HINTS,
   });
 
-  // 2. Просим спонсорство ровно под EP v0.7
+  // 2) спонсорство от paymaster под EP v0.7
   const sponsorship = await paymaster.sponsorUserOperation({
     userOperation: uo,
     entryPoint: ENTRY_POINT_V07,
-    // sponsorshipPolicyId: '...если хочешь привязать полиси явно...'
+    // sponsorshipPolicyId: '...если нужно указать policy явно...'
   });
 
-  // 3. Отправляем готовый юзерОп
+  // 3) отправляем готовый userOp
   const hash = await bundler.sendUserOperation({
     userOperation: { ...uo, ...sponsorship },
   });
