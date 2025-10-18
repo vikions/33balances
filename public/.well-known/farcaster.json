@@ -1,7 +1,20 @@
 {
-  "name": "TriBalance",
-  "description": "Smart Account voting dApp. Mint a Proof and vote with MetaMask Smart Account inside Farcaster.",
-  "iconUrl": "https://3balances.vercel.app/icon.png",
-  "homeUrl": "https://3balances.vercel.app/",
-  "sdkUrl": "https://esm.sh/@farcaster/miniapp-sdk@latest"
+  "frame": {
+    "name": "3balances",
+    "version": "1",
+    "iconUrl": "https://3balances.vercel.app/icon.png",
+    "homeUrl": "https://3balances.vercel.app",
+    "imageUrl": "https://3balances.vercel.app/image.png",
+    "splashImageUrl": "https://3balances.vercel.app/splash.png",
+    "splashBackgroundColor": "#6300EA",
+    "webhookUrl": "https://3balances.vercel.app/api/webhook",
+    "subtitle": "3balances",
+    "description": "Smart Account voting dApp for Monad. Mint a Proof and vote with MetaMask Smart Account inside Farcaster.",
+    "primaryCategory": "social"
+  },
+  "accountAssociation": {
+    "header": "eyJmaWQiOjk0OTkwMSwidHlwZSI6ImF1dGgiLCJrZXkiOiIweGExQjkxOWU5OWMyQWE3ZTkxNEE5NWFDQjI5RWI1MEY1MTNiNjgzNmIifQ",
+    "payload": "eyJkb21haW4iOiIzYmFsYW5jZXMudmVyY2VsLmFwcCJ9",
+    "signature": "Pyxau1rtDFUpe69hQBzeO2QMnmuD7emZxVsfoWUn/NpEeGstSy82NuyNTF7mR0SfOf9ZX+MaEK6KNewi+hsythw="
+  }
 }

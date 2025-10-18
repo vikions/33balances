@@ -1,0 +1,9 @@
+{
+  "redirects": [
+    {
+      "source": "/.well-known/farcaster.json",
+      "destination": "https://api.farcaster.xyz/miniapps/hosted-manifest/0199f7bf-03e0-f70a-dc17-34287d789a9b",
+      "permanent": false
+    }
+  ]
+}
