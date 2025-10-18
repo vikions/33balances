@@ -133,32 +133,42 @@ export function makeCalldata(abi, fn, args) {
   return encodeFunctionData({ abi, functionName: fn, args });
 }
 
-/* === НОВОЕ: берём актуальные gas prices у Pimlico === */
+/* === ОБНОВЛЕНО: корректный парсинг pimlico_getUserOperationGasPrice (tiers) === */
 async function getPimlicoGas(bundler) {
-  // если метод доступен на клиенте — используем его
-  if (typeof bundler.getUserOperationGasPrice === "function") {
-    const { maxFeePerGas, maxPriorityFeePerGas } =
-      await bundler.getUserOperationGasPrice();
+  try {
+    if (typeof bundler.getUserOperationGasPrice === "function") {
+      const res = await bundler.getUserOperationGasPrice();
+      const pick = (obj) =>
+        obj?.standard ?? obj?.fast ?? obj?.slow ?? obj; // предпочитаем standard
+      const tier = pick(res);
+      return {
+        maxFeePerGas: BigInt(tier.maxFeePerGas),
+        maxPriorityFeePerGas: BigInt(tier.maxPriorityFeePerGas),
+      };
+    }
+
+    // raw RPC к Pimlico
+    const rpc = await bundler.request({
+      method: "pimlico_getUserOperationGasPrice",
+      params: [],
+    });
+    const tier = rpc?.standard ?? rpc?.fast ?? rpc?.slow ?? rpc;
     return {
-      maxFeePerGas: BigInt(maxFeePerGas),
-      maxPriorityFeePerGas: BigInt(maxPriorityFeePerGas),
+      maxFeePerGas: BigInt(tier.maxFeePerGas),
+      maxPriorityFeePerGas: BigInt(tier.maxPriorityFeePerGas),
     };
+  } catch (e) {
+    console.warn("[gas] fallback due to error:", e?.message || e);
+    const HARD_MAX = 200_000_000_000n; // 200 gwei
+    const HARD_TIP = 2_000_000_000n;   // 2 gwei
+    return { maxFeePerGas: HARD_MAX, maxPriorityFeePerGas: HARD_TIP };
   }
-  // fallback: raw RPC
-  const resp = await bundler.request({
-    method: "pimlico_getUserOperationGasPrice",
-    params: [],
-  });
-  return {
-    maxFeePerGas: BigInt(resp.maxFeePerGas),
-    maxPriorityFeePerGas: BigInt(resp.maxPriorityFeePerGas),
-  };
 }
 
 export async function sendCalls(ctx, { to, data, value = 0n }) {
   const { bundler, smartAccount, paymaster } = ctx;
 
-  // 👉 ключевое: берём валидные значения газа у Pimlico
+  // 👉 Берём валидные значения газа у Pimlico
   const { maxFeePerGas, maxPriorityFeePerGas } = await getPimlicoGas(bundler);
 
   const hash = await bundler.sendUserOperation({
