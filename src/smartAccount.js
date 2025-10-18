@@ -27,25 +27,19 @@ const BUNDLER_URL =
 
 if (!PIMLICO_API_KEY) throw new Error("Missing VITE_PIMLICO_API_KEY");
 
-// EP v0.7 (Monad testnet, Pimlico)
+// EntryPoint (v0.7 для Monad testnet)
 export const ENTRY_POINT_V07 =
   "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 
+// === Клиент для публичных запросов ===
 export function makePublicClient() {
   return createPublicClient({ chain: monadTestnet, transport: http(RPC) });
 }
 
-// Консервативные подсказки по газу (чтобы избежать binarySearchCallGas)
-const GAS_HINTS = {
-  callGasLimit:         400_000n,
-  verificationGasLimit: 1_300_000n,
-  preVerificationGas:   110_000n,
-};
-
 export async function initSmartAccount() {
   const eip1193 = await getEip1193Provider();
 
-  // EOA
+  // EOA (Farcaster wallet)
   const tmpClient = createWalletClient({
     chain: monadTestnet,
     transport: custom(eip1193),
@@ -60,7 +54,7 @@ export async function initSmartAccount() {
 
   const publicClient = makePublicClient();
 
-  // MetaMask Smart Account
+  // === MetaMask Smart Account ===
   const smartAccount = await toMetaMaskSmartAccount({
     client: publicClient,
     implementation: Implementation.Hybrid,
@@ -70,14 +64,14 @@ export async function initSmartAccount() {
     chain: monadTestnet,
   });
 
-  // Bundler (EP v0.7)
+  // === Bundler ===
   const bundler = createBundlerClient({
     client: publicClient,
     entryPoint: ENTRY_POINT_V07,
     transport: http(BUNDLER_URL),
   });
 
-  // Paymaster
+  // === Paymaster ===
   const paymaster = createPaymasterClient({
     chain: monadTestnet,
     transport: http(
@@ -93,36 +87,27 @@ export async function initSmartAccount() {
   };
 }
 
+// === Кодировщик calldata ===
 export function makeCalldata(abi, fn, args) {
   return encodeFunctionData({ abi, functionName: fn, args });
 }
 
 /**
- * Отправка одного call как SPONSORED userOp (EP v0.7):
- * 1) bundler.prepareUserOperation({ account, calls, ...gasHints })
- * 2) paymaster.sponsorUserOperation({ userOperation, entryPoint })
- * 3) bundler.sendUserOperation({ userOperation: { ...uo, ...sponsorship } })
+ * Простой путь — как в гайдах Pimlico:
+ * используем bundler.sendUserOperation(), передавая paymaster прямо в параметры.
  */
 export async function sendCalls(ctx, { to, data, value = 0n }) {
-  const { smartAccount, bundler, paymaster } = ctx;
+  const { bundler, smartAccount, paymaster } = ctx;
 
-  // 1) готовим userOp на бандлере
-  const uo = await bundler.prepareUserOperation({
+  const maxFeePerGas = 1n;
+  const maxPriorityFeePerGas = 1n;
+
+  const hash = await bundler.sendUserOperation({
     account: smartAccount,
     calls: [{ to, data, value }],
-    ...GAS_HINTS,
-  });
-
-  // 2) спонсорство от paymaster под EP v0.7
-  const sponsorship = await paymaster.sponsorUserOperation({
-    userOperation: uo,
-    entryPoint: ENTRY_POINT_V07,
-    // sponsorshipPolicyId: '...если нужно указать policy явно...'
-  });
-
-  // 3) отправляем готовый userOp
-  const hash = await bundler.sendUserOperation({
-    userOperation: { ...uo, ...sponsorship },
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+    paymaster, // просто передаём paymasterClient
   });
 
   return { hash };
