@@ -27,8 +27,9 @@ const BUNDLER_URL =
 
 if (!PIMLICO_API_KEY) throw new Error("Missing VITE_PIMLICO_API_KEY");
 
-// === EntryPoint для Monad ===
-export const ENTRY_POINT_V07 = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
+// EntryPoint v0.7 (Monad)
+export const ENTRY_POINT_V07 =
+  "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 
 export function makePublicClient() {
   return createPublicClient({
@@ -38,9 +39,10 @@ export function makePublicClient() {
 }
 
 export async function initSmartAccount() {
+  // 1) провайдер Farcaster (EIP-1193)
   const eip1193 = await getEip1193Provider();
 
-  // === EOA (Farcaster / MetaMask signer)
+  // 2) EOA/WalletClient из Farcaster
   const tmpClient = createWalletClient({
     chain: monadTestnet,
     transport: custom(eip1193),
@@ -55,7 +57,7 @@ export async function initSmartAccount() {
 
   const publicClient = makePublicClient();
 
-  // === создаём MetaMask Smart Account
+  // 3) Предсчитываем MetaMask Smart Account (адрес и initCode)
   const smartAccount = await toMetaMaskSmartAccount({
     client: publicClient,
     implementation: Implementation.Hybrid,
@@ -65,14 +67,41 @@ export async function initSmartAccount() {
     chain: monadTestnet,
   });
 
-  // === ФИКС: если аккаунт уже задеплоен — убираем initCode
-  const deployedCode = await publicClient.getCode({ address: smartAccount.address });
-  if (deployedCode && deployedCode !== "0x") {
-    console.log("Smart account already deployed, skipping initCode");
+  // 4) Проверяем — уже развернут ли контракт по этому адресу
+  const code = await publicClient.getCode({ address: smartAccount.address });
+
+  if (!code || code === "0x") {
+    // 4a) НЕ развернут — разворачиваем ВРУЧНУЮ через factory
+    const { factory, factoryData } = await smartAccount.getFactoryArgs();
+
+    console.log(
+      "[SA] Deploying smart account via factory:",
+      factory,
+      "address:",
+      smartAccount.address
+    );
+
+    const txHash = await walletClient.sendTransaction({
+      to: factory,
+      data: factoryData,
+    });
+
+    // ждём майнинга
+    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+    if (receipt.status !== "success") {
+      throw new Error("Smart Account deployment failed");
+    }
+    console.log("[SA] Deployed at:", smartAccount.address);
+
+    // после ручного деплоя никакого initCode нам больше не нужно
     smartAccount.initCode = "0x";
+  } else {
+    // уже развернут — защита от случайной повторной попытки деплоя
+    smartAccount.initCode = "0x";
+    console.log("[SA] Already deployed:", smartAccount.address);
   }
 
-  // === создаём Bundler и Paymaster (оба Pimlico)
+  // 5) Bundler & Paymaster (Pimlico, EP v0.7)
   const bundler = createBundlerClient({
     client: publicClient,
     entryPoint: ENTRY_POINT_V07,
@@ -81,7 +110,9 @@ export async function initSmartAccount() {
 
   const paymaster = createPaymasterClient({
     chain: monadTestnet,
-    transport: http(BUNDLER_URL),
+    transport: http(
+      `https://api.pimlico.io/v2/${PIMLICO_CHAIN}/rpc?apikey=${PIMLICO_API_KEY}`
+    ),
   });
 
   return { smartAccount, bundler, paymaster, address: smartAccount.address };
@@ -91,11 +122,11 @@ export function makeCalldata(abi, fn, args) {
   return encodeFunctionData({ abi, functionName: fn, args });
 }
 
-// === простой способ отправить AA-транзакцию
+// Отправка одной AA-операции (спонсорит Pimlico Paymaster)
 export async function sendCalls(ctx, { to, data, value = 0n }) {
   const { bundler, smartAccount, paymaster } = ctx;
 
-  // минимальные значения, чтобы избежать бинарного поиска газа
+  // минимальные фи, чтобы не триггерить бинарный поиск у бандлера
   const maxFeePerGas = 1n;
   const maxPriorityFeePerGas = 1n;
 
@@ -104,7 +135,7 @@ export async function sendCalls(ctx, { to, data, value = 0n }) {
     calls: [{ to, data, value }],
     maxFeePerGas,
     maxPriorityFeePerGas,
-    paymaster, // передаём paymasterClient
+    paymaster, // используем sponsor от Pimlico
   });
 
   return { hash };
