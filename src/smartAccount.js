@@ -27,14 +27,13 @@ const BUNDLER_URL =
 
 if (!PIMLICO_API_KEY) throw new Error("Missing VITE_PIMLICO_API_KEY");
 
-// EntryPoint v0.7 (Monad)
+
 export const ENTRY_POINT_V07 = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 
 export function makePublicClient() {
   return createPublicClient({ chain: monadTestnet, transport: http(RPC) });
 }
 
-// --- НОВОЕ: гарантированно переключаем Farcaster Wallet на Monad Testnet ---
 async function ensureMonadChain(eip1193) {
   const targetHex = `0x${monadTestnet.id.toString(16)}`; // 0x279f (10143)
   const current = await eip1193.request({ method: "eth_chainId" });
@@ -68,13 +67,13 @@ async function ensureMonadChain(eip1193) {
 }
 
 export async function initSmartAccount() {
-  // 1) Farcaster provider
+ 
   const eip1193 = await getEip1193Provider();
 
-  // 2) Переключаем сеть на Monad Testnet
+ 
   await ensureMonadChain(eip1193);
 
-  // 3) Готовим EOA/WalletClient на правильной сети
+  
   const tmpClient = createWalletClient({
     chain: monadTestnet,
     transport: custom(eip1193),
@@ -89,7 +88,7 @@ export async function initSmartAccount() {
 
   const publicClient = makePublicClient();
 
-  // 4) Предсчитываем MetaMask Smart Account
+  
   const smartAccount = await toMetaMaskSmartAccount({
     client: publicClient,
     implementation: Implementation.Hybrid,
@@ -99,7 +98,7 @@ export async function initSmartAccount() {
     chain: monadTestnet,
   });
 
-  // 5) Проверяем — есть ли байткод по адресу SA; если нет — деплоим через factory
+
   const code = await publicClient.getCode({ address: smartAccount.address });
 
   if (!code || code === "0x") {
@@ -112,7 +111,7 @@ export async function initSmartAccount() {
     smartAccount.initCode = "0x";
   }
 
-  // 6) Bundler & Paymaster (Pimlico, EP v0.7)
+  
   const bundler = createBundlerClient({
     client: publicClient,
     entryPoint: ENTRY_POINT_V07,
@@ -133,13 +132,13 @@ export function makeCalldata(abi, fn, args) {
   return encodeFunctionData({ abi, functionName: fn, args });
 }
 
-/* === ОБНОВЛЕНО: корректный парсинг pimlico_getUserOperationGasPrice (tiers) === */
+
 async function getPimlicoGas(bundler) {
   try {
     if (typeof bundler.getUserOperationGasPrice === "function") {
       const res = await bundler.getUserOperationGasPrice();
       const pick = (obj) =>
-        obj?.standard ?? obj?.fast ?? obj?.slow ?? obj; // предпочитаем standard
+        obj?.standard ?? obj?.fast ?? obj?.slow ?? obj; 
       const tier = pick(res);
       return {
         maxFeePerGas: BigInt(tier.maxFeePerGas),
@@ -168,7 +167,7 @@ async function getPimlicoGas(bundler) {
 export async function sendCalls(ctx, { to, data, value = 0n }) {
   const { bundler, smartAccount, paymaster } = ctx;
 
-  // 👉 Берём валидные значения газа у Pimlico
+
   const { maxFeePerGas, maxPriorityFeePerGas } = await getPimlicoGas(bundler);
 
   const hash = await bundler.sendUserOperation({

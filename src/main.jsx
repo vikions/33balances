@@ -12,5 +12,5 @@ ReactDOM.createRoot(root).render(
   </MiniAppProvider>
 );
 
-// скрываем сплэш, если это Mini App (безопасно и вне Mini App)
+
 tryReadyMiniApp();

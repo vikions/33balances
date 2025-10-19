@@ -34,8 +34,8 @@ const CHOICES = [
 // ===== APP =====
 export default function App() {
   // providers
-  const [readProvider, setReadProvider] = useState(null); // только RPC для чтения
-  const [provider, setProvider] = useState(null); // Farcaster BrowserProvider — только для подключения
+  const [readProvider, setReadProvider] = useState(null); 
+  const [provider, setProvider] = useState(null); 
 
   // state
   const [eoa, setEoa] = useState(null);
@@ -55,7 +55,7 @@ export default function App() {
     setReadProvider(new ethers.JsonRpcProvider(RPC));
   }, []);
 
-  // read-only contracts (всегда через RPC!)
+  // read-only contracts 
   const readContracts = useMemo(() => {
     if (!readProvider) return null;
     const nft = new ethers.Contract(NFT_ADDR, NFT_ABI, readProvider);
@@ -105,7 +105,7 @@ export default function App() {
     } catch {}
   }
 
-  // polling: авто-обновление процентов
+  
   useEffect(() => {
     if (!readProvider) return;
     const id = setInterval(loadPowers, 5000);
@@ -159,7 +159,7 @@ export default function App() {
     });
   }
 
-  // AA send — ТЕПЕРЬ через наш sendCalls (EP v0.7 + sponsorship + газ-хинты)
+  
   async function sendOne(to, data, value = 0n) {
     const { hash } = await sendCalls(mmsa, { to, data, value });
     return { hash };
@@ -211,7 +211,7 @@ export default function App() {
         return;
       }
       if (owned === null) {
-        // автоматом: mint -> vote (две userOp подряд)
+        
         const { hash: h1 } = await sendOne(NFT_ADDR, buildMintCalldata(choice));
         setLastOpHash(h1);
         const { hash: h2 } = await sendOne(TRI_ADDR, buildVoteCalldata(choice));
@@ -332,7 +332,7 @@ export default function App() {
   );
 }
 
-// ======== UI Primitives ========
+
 
 function Header() {
   return (
@@ -380,7 +380,7 @@ function Card({ children, glow }) {
   );
 }
 
-/* === НОВОЕ: Круговой “переливающийся” баланс === */
+
 function FlowRings({ pct, values }) {
   const [anim, setAnim] = useState({ meta: 0, cast: 0, mon: 0 });
 
@@ -401,7 +401,7 @@ function FlowRings({ pct, values }) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, [pct.meta, pct.cast, pct.mon]);
 
   const rings = [
@@ -515,7 +515,7 @@ function ActionCard({ label, emoji, color, glow, onClick, disabled }) {
   );
 }
 
-// ======== Styles ========
+
 
 const globalCss = `
 .title { font-size: 38px; font-weight: 800; letter-spacing: .5px; margin: 6px 0 4px; }
@@ -564,7 +564,7 @@ const actionCss = `
 .action:disabled{ opacity:.6; cursor:not-allowed; transform:none; }
 `;
 
-/* === НОВОЕ: стили для FlowRings === */
+
 const flowCss = `
 .flowWrap { display:flex; flex-direction:column; align-items:center; gap:12px; }
 .flowSvg { width: 100%; max-width: 320px; height: auto; }
@@ -579,6 +579,6 @@ const flowCss = `
 .labelRow .count { opacity:.6; font-size:12px; }
 `;
 
-// ===== Utils =====
+
 function short(a){ return `${a.slice(0,6)}…${a.slice(-4)}`; }
 function humanError(e){ return e?.shortMessage || e?.reason || e?.data?.message || e?.message || String(e); }

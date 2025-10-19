@@ -14,7 +14,7 @@ export function isMiniAppEnv() {
 
 export async function tryReadyMiniApp() {
   try {
-    await sdk.actions.ready(); // скрывает сплэш в Mini App
+    await sdk.actions.ready(); 
     return true;
   } catch {
     return false;
