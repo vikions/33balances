@@ -5,7 +5,7 @@
     "iconUrl": "https://3balances.vercel.app/icon.png",
     "homeUrl": "https://3balances.vercel.app",
     "imageUrl": "https://3balances.vercel.app/image.png",
-    "tags": ["3balances", "monad", "miniapp", "voting", "defi"],
+    "tags": "3balance", "monad", "miniapp", "voting", "defi",
     "splashImageUrl": "https://3balances.vercel.app/splash.png",
     "splashBackgroundColor": "#6300EA",
     "webhookUrl": "https://3balances.vercel.app/api/webhook",
