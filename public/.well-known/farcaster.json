@@ -22,12 +22,11 @@
     ],
     "primaryCategory": "social",
     "tags": [
-      "3balances",
+      "balances",
       "monad",
       "voting",
-      "defi",
-      "smartaccounts"
-    ],
+      "defi"
+     ],
     "heroImageUrl": "https://3balances.vercel.app/image.png",
     "tagline": "Smart account voting app",
     "ogTitle": "3balances",
