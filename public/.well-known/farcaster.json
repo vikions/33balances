@@ -15,7 +15,7 @@
     "splashImageUrl": "https://3balances.vercel.app/splash.png",
     "splashBackgroundColor": "#6300EA",
     "webhookUrl": "https://3balances.vercel.app/api/webhook",
-    "subtitle": "3balances voting",
+    "subtitle": "balances voting",
     "description": "Smart account voting dApp for Monad. Mint a proof and vote with a MetaMask smart account.",
     "screenshotUrls": [
       "https://3balances.vercel.app/image.png"
@@ -29,7 +29,7 @@
      ],
     "heroImageUrl": "https://3balances.vercel.app/image.png",
     "tagline": "Smart account voting app",
-    "ogTitle": "3balances",
+    "ogTitle": "balances",
     "ogDescription": "Smart account voting dApp for Monad with MetaMask smart accounts.",
     "ogImageUrl": "https://3balances.vercel.app/image.png",
     "noindex": false
