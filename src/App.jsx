@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { ethers } from "ethers";
-import { createBaseAccountSDK, base } from "@base-org/account";
+import { createBaseAccountSDK } from "@base-org/account";
 import { baseSepolia } from "viem/chains";
 import { userOpTrackUrl, monadAddressUrl } from "./smartAccount"; // используем только для ссылок
 
 // === ADDRESS / CHAIN ===
 const CONTRACT_ADDRESS = "0xA6e3b00f25569644b3e66D214585567872c94B8B";
-const CHAIN_ID_HEX = "0x" + CHAIN_ID.toString(16); 
-const CHAIN_ID = base.constants.CHAIN_IDS.baseSepolia; 
+const CHAIN_ID_HEX = "0x" + CHAIN_ID.toString(16);
+const CHAIN_ID = baseSepolia.id;   
 // === ABI ===
 // Чтение: getVotes, canVote, timeUntilNextVote
 const READ_ABI = [
@@ -49,12 +49,12 @@ export default function App() {
   const connected = subAddress || universalAddress;
 
   // Инициализация Base Account SDK
- useEffect(() => {
+useEffect(() => {
   const init = async () => {
     const sdk = createBaseAccountSDK({
       appName: "TriBalance",
       appLogoUrl: "https://base.org/logo.png",
-      appChainIds: [CHAIN_ID], // вместо baseSepolia.id
+      appChainIds: [CHAIN_ID],   
       subAccounts: {
         creation: "on-connect",
         defaultAccount: "sub",
