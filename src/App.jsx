@@ -14,7 +14,7 @@ const CONTRACT_ADDRESS = "0xA6e3b00f25569644b3e66D214585567872c94B8B";
 const CHAIN_ID = baseSepolia.id; // 84532
 
 // === ABI ===
-// Один общий ABI для чтения и записи
+
 const CONTRACT_ABI = parseAbi([
   "function getVotes() view returns (uint256 baseVotes, uint256 farcasterVotes, uint256 zoraVotes)",
   "function canVote(address user) view returns (bool)",
@@ -54,7 +54,7 @@ const CHOICES = [
 const config = createConfig({
   chains: [baseSepolia],
   transports: {
-    [baseSepolia.id]: http(), // можно подставить свой RPC
+    [baseSepolia.id]: http(), 
   },
   connectors: [
     farcasterMiniApp(),
@@ -67,7 +67,7 @@ const config = createConfig({
 
 const queryClient = new QueryClient();
 
-// Обёртка: провайдеры wagmi + react-query
+
 export default function App() {
   return (
     <WagmiProvider config={config}>
@@ -78,12 +78,12 @@ export default function App() {
   );
 }
 
-// ===== ОСНОВНОЙ КОМПОНЕНТ =====
+
 function TriBalanceApp() {
   const { address, isConnected } = useAccount();
   const { connect, connectors, isPending } = useConnect();
 
-  // Стейт
+  
   const [powers, setPowers] = useState({ meta: 0, cast: 0, mon: 0 });
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -92,7 +92,7 @@ function TriBalanceApp() {
 
   const connected = !!address;
 
-  // Загрузка голосов и кулдауна
+ 
   const loadPowers = async (addr) => {
     try {
       const [baseVotes, farVotes, zoraVotes] = await readContract(config, {
@@ -124,7 +124,7 @@ function TriBalanceApp() {
     }
   };
 
-  // Периодическое обновление диаграммы
+ 
   useEffect(() => {
     if (!connected) return;
     loadPowers(address);
@@ -132,7 +132,7 @@ function TriBalanceApp() {
     return () => clearInterval(id);
   }, [connected, address]);
 
-  // Connect Base Account (для браузера / fallback — в Base App farcasterMiniApp сам подключит)
+ 
   const connectWallet = async () => {
     try {
       setMessage("");
@@ -148,7 +148,7 @@ function TriBalanceApp() {
     }
   };
 
-  // Голосование через sendCalls (wagmi / Base Account)
+  
   const handleVote = async (choiceId) => {
     try {
       if (!connected || !address)
@@ -157,7 +157,7 @@ function TriBalanceApp() {
       setMessage("");
       setLastOpHash(null);
 
-      // Проверка кулдауна через canVote
+      
       const can = await readContract(config, {
         address: CONTRACT_ADDRESS,
         abi: CONTRACT_ABI,
@@ -183,21 +183,21 @@ function TriBalanceApp() {
         return;
       }
 
-      // Кодируем вызов vote(option)
+      
       const data = encodeFunctionData({
         abi: CONTRACT_ABI,
         functionName: "vote",
         args: [choiceId],
       });
 
-      // Проверяем paymaster capabilities (по доке)
+      
       const capabilities = await getCapabilities(config, {
         account: address,
       });
       const chainCaps = capabilities[CHAIN_ID];
       const supportsPaymaster = chainCaps?.paymasterService?.supported;
 
-      // Отправляем батч (здесь один call) через sendCalls
+      
       const id = await sendCalls(config, {
         account: address,
         chainId: CHAIN_ID,
@@ -207,19 +207,18 @@ function TriBalanceApp() {
             data,
           },
         ],
-        // Если хочешь спонсировать газ — подставь свой paymaster URL
+        
         capabilities: supportsPaymaster
           ? {
               paymasterService: {
-                // TODO: положить ключ в env и подставить отсюда
+                
                 url: "https://api.developer.coinbase.com/rpc/v1/base-sepolia/YOUR_KEY",
               },
             }
           : undefined,
       });
 
-      // В Mini App Base Account сам трекает батч по id, txHash может быть в статусе,
-      // но в простом варианте просто покажем id
+      
       setLastOpHash(String(id));
       setMessage("✅ Vote request sent!");
       await loadPowers(address);
@@ -295,7 +294,7 @@ function TriBalanceApp() {
         )}
       </Card>
 
-      {/* Balance of powers — КРУГОВАЯ ДИАГРАММА */}
+      {/* Balance of powers  */}
       <Card>
         <h3 className="cardTitle">Balance of Powers</h3>
         <FlowRings pct={pct} values={powers} />
@@ -336,7 +335,7 @@ function TriBalanceApp() {
   );
 }
 
-/* ==== ДАЛЬШЕ — ТВОЙ UI БЕЗ ИЗМЕНЕНИЙ ==== */
+
 
 function Header() {
   return (
