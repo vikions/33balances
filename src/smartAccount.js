@@ -6,184 +6,116 @@ import {
   custom,
   encodeFunctionData,
 } from "viem";
-import {
-  createBundlerClient,
-  createPaymasterClient,
-} from "viem/account-abstraction";
-import { monadTestnet } from "./chain";
-import {
-  Implementation,
-  toMetaMaskSmartAccount,
-} from "@metamask/delegation-toolkit";
+import { base } from "viem/chains";
 import { getEip1193Provider } from "./fcProvider";
 
 // === ENV ===
-const RPC = import.meta.env.VITE_MONAD_RPC;
-const PIMLICO_CHAIN = import.meta.env.VITE_PIMLICO_CHAIN || "monad-testnet";
-const PIMLICO_API_KEY = import.meta.env.VITE_PIMLICO_API_KEY;
-const BUNDLER_URL =
-  import.meta.env.VITE_BUNDLER_URL ||
-  `https://api.pimlico.io/v2/${PIMLICO_CHAIN}/rpc?apikey=${PIMLICO_API_KEY}`;
+// Новый RPC под Base (можно изменить на Base Sepolia при желании)
+const BASE_RPC =
+  import.meta.env.VITE_BASE_RPC || "https://mainnet.base.org";
 
-if (!PIMLICO_API_KEY) throw new Error("Missing VITE_PIMLICO_API_KEY");
-
-
+// Оставляем константу для совместимости, хотя она больше не используется
 export const ENTRY_POINT_V07 = "0x0000000071727De22E5E9d8BAf0edAc6f37da032";
 
+// === PUBLIC CLIENT ===
+
 export function makePublicClient() {
-  return createPublicClient({ chain: monadTestnet, transport: http(RPC) });
+  return createPublicClient({
+    chain: base,
+    transport: http(BASE_RPC),
+  });
 }
 
-async function ensureMonadChain(eip1193) {
-  const targetHex = `0x${monadTestnet.id.toString(16)}`; // 0x279f (10143)
-  const current = await eip1193.request({ method: "eth_chainId" });
-  if (current === targetHex) return;
+// === Проверка сети (мягкая) ===
 
+async function ensureBaseChain(eip1193) {
+  const targetHex = `0x${base.id.toString(16)}`; // 0x2105 (8453)
   try {
+    const current = await eip1193.request({ method: "eth_chainId" });
+    if (current === targetHex) return;
+
+    // В обычных кошельках может сработать, в BaseApp может быть зафиксировано — тогда просто поймаем ошибку
     await eip1193.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: targetHex }],
     });
   } catch (err) {
-    if (err?.code === 4902 /* Chain not added */) {
-      await eip1193.request({
-        method: "wallet_addEthereumChain",
-        params: [{
-          chainId: targetHex,
-          chainName: "Monad Testnet",
-          rpcUrls: [RPC],
-          nativeCurrency: { name: "MON", symbol: "MON", decimals: 18 },
-          blockExplorerUrls: ["https://testnet.monadexplorer.com/"],
-        }],
-      });
-      await eip1193.request({
-        method: "wallet_switchEthereumChain",
-        params: [{ chainId: targetHex }],
-      });
-    } else {
-      throw err;
-    }
+    console.warn("[ensureBaseChain] Cannot switch network (maybe fixed to Base):", err);
   }
 }
+
+// === INIT: раньше создавался MetaMask Smart Account через Pimlico,
+// теперь — просто обычный EOA на Base, но с тем же интерфейсом снаружи.
 
 export async function initSmartAccount() {
- 
   const eip1193 = await getEip1193Provider();
 
- 
-  await ensureMonadChain(eip1193);
-
-  
-  const tmpClient = createWalletClient({
-    chain: monadTestnet,
-    transport: custom(eip1193),
-  });
-  const [ownerAddress] = await tmpClient.requestAddresses();
+  await ensureBaseChain(eip1193).catch(() => {});
 
   const walletClient = createWalletClient({
-    account: ownerAddress,
-    chain: monadTestnet,
+    chain: base,
     transport: custom(eip1193),
   });
 
+  const [address] = await walletClient.getAddresses();
   const publicClient = makePublicClient();
 
-  
-  const smartAccount = await toMetaMaskSmartAccount({
-    client: publicClient,
-    implementation: Implementation.Hybrid,
-    deployParams: [ownerAddress, [], [], []],
-    deploySalt: "0x",
-    signer: { walletClient },
-    chain: monadTestnet,
-  });
+  // Для совместимости оставляем объект smartAccount с полем address,
+  // чтобы старый код, который делает smartAccount.address, не сломался.
+  const smartAccount = { address };
 
-
-  const code = await publicClient.getCode({ address: smartAccount.address });
-
-  if (!code || code === "0x") {
-    const { factory, factoryData } = await smartAccount.getFactoryArgs();
-    const txHash = await walletClient.sendTransaction({ to: factory, data: factoryData });
-    const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-    if (receipt.status !== "success") throw new Error("Smart Account deployment failed");
-    smartAccount.initCode = "0x";
-  } else {
-    smartAccount.initCode = "0x";
-  }
-
-  
-  const bundler = createBundlerClient({
-    client: publicClient,
-    entryPoint: ENTRY_POINT_V07,
-    transport: http(BUNDLER_URL),
-  });
-
-  const paymaster = createPaymasterClient({
-    chain: monadTestnet,
-    transport: http(
-      `https://api.pimlico.io/v2/${PIMLICO_CHAIN}/rpc?apikey=${PIMLICO_API_KEY}`
-    ),
-  });
-
-  return { smartAccount, bundler, paymaster, address: smartAccount.address };
+  return {
+    walletClient,
+    publicClient,
+    smartAccount,
+    address,
+    // Для совместимости: раньше возвращались bundler и paymaster
+    bundler: null,
+    paymaster: null,
+  };
 }
+
+// === calldata как и раньше ===
 
 export function makeCalldata(abi, fn, args) {
   return encodeFunctionData({ abi, functionName: fn, args });
 }
 
-
-async function getPimlicoGas(bundler) {
-  try {
-    if (typeof bundler.getUserOperationGasPrice === "function") {
-      const res = await bundler.getUserOperationGasPrice();
-      const pick = (obj) =>
-        obj?.standard ?? obj?.fast ?? obj?.slow ?? obj; 
-      const tier = pick(res);
-      return {
-        maxFeePerGas: BigInt(tier.maxFeePerGas),
-        maxPriorityFeePerGas: BigInt(tier.maxPriorityFeePerGas),
-      };
-    }
-
-    // raw RPC к Pimlico
-    const rpc = await bundler.request({
-      method: "pimlico_getUserOperationGasPrice",
-      params: [],
-    });
-    const tier = rpc?.standard ?? rpc?.fast ?? rpc?.slow ?? rpc;
-    return {
-      maxFeePerGas: BigInt(tier.maxFeePerGas),
-      maxPriorityFeePerGas: BigInt(tier.maxPriorityFeePerGas),
-    };
-  } catch (e) {
-    console.warn("[gas] fallback due to error:", e?.message || e);
-    const HARD_MAX = 200_000_000_000n; // 200 gwei
-    const HARD_TIP = 2_000_000_000n;   // 2 gwei
-    return { maxFeePerGas: HARD_MAX, maxPriorityFeePerGas: HARD_TIP };
-  }
-}
+// === Отправка вызовов ===
+// Было: через bundler.sendUserOperation + paymaster.
+// Стало: обычный sendTransaction. Снаружи имя функции остаётся тем же.
 
 export async function sendCalls(ctx, { to, data, value = 0n }) {
-  const { bundler, smartAccount, paymaster } = ctx;
+  const { walletClient } = ctx;
+  if (!walletClient) {
+    throw new Error("walletClient is missing in context passed to sendCalls");
+  }
 
-
-  const { maxFeePerGas, maxPriorityFeePerGas } = await getPimlicoGas(bundler);
-
-  const hash = await bundler.sendUserOperation({
-    account: smartAccount,
-    calls: [{ to, data, value }],
-    maxFeePerGas,
-    maxPriorityFeePerGas,
-    paymaster,
+  const hash = await walletClient.sendTransaction({
+    to,
+    data,
+    value,
   });
 
   return { hash };
 }
 
+// === Функции-утилиты для ссылок (обновляем под Base) ===
+
+// Имя оставляем, но теперь это просто tx в BaseScan
 export function userOpTrackUrl(hash) {
-  return `https://pimlico.io/explorer/userOp?hash=${hash}`;
+  return `https://basescan.org/tx/${hash}`;
 }
+
+// Имя оставляем ради совместимости, но ведёт на адрес в BaseScan
 export function monadAddressUrl(addr) {
-  return `https://testnet.monadexplorer.com/address/${addr}`;
+  return `https://basescan.org/address/${addr}`;
+}
+
+// Оставим заглушку getPimlicoGas на всякий случай, если вдруг где-то импортируется.
+// Она больше не используется, но пусть возвращает какие-то значения.
+export async function getPimlicoGas() {
+  const HARD_MAX = 20_000_000_000n; // 20 gwei
+  const HARD_TIP = 1_000_000_000n;  // 1 gwei
+  return { maxFeePerGas: HARD_MAX, maxPriorityFeePerGas: HARD_TIP };
 }
