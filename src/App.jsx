@@ -1,137 +1,122 @@
-import { useEffect, useMemo, useState } from "react";
-import { ethers } from "ethers";
-import { createBaseAccountSDK } from "@base-org/account";
-import { baseSepolia } from "viem/chains";
-import { userOpTrackUrl, monadAddressUrl } from "./smartAccount"; // используем только для ссылок
+import { useEffect, useState } from "react";
+import { WagmiProvider, useAccount, useConnect } from "wagmi";
+import { baseSepolia } from "wagmi/chains";
+import { baseAccount } from "wagmi/connectors";
+import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
+import { createConfig, http } from "wagmi";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { sendCalls, getCapabilities, readContract } from "@wagmi/core";
+import { parseAbi, encodeFunctionData } from "viem";
+import { userOpTrackUrl, monadAddressUrl } from "./smartAccount";
 
 // === ADDRESS / CHAIN ===
 const CONTRACT_ADDRESS = "0xA6e3b00f25569644b3e66D214585567872c94B8B";
-const CHAIN_ID_HEX = "0x" + CHAIN_ID.toString(16);
-const CHAIN_ID = baseSepolia.id;   
+const CHAIN_ID = baseSepolia.id; // 84532
+
 // === ABI ===
-// Чтение: getVotes, canVote, timeUntilNextVote
-const READ_ABI = [
+// Один общий ABI для чтения и записи
+const CONTRACT_ABI = parseAbi([
   "function getVotes() view returns (uint256 baseVotes, uint256 farcasterVotes, uint256 zoraVotes)",
   "function canVote(address user) view returns (bool)",
   "function timeUntilNextVote(address user) view returns (uint256)",
-];
-
-// Запись: vote(option)
-const WRITE_ABI = ["function vote(uint8 option)"];
+  "function vote(uint8 option)",
+]);
 
 // === CHOICES ===
-// Ключи (meta/cast/mon) оставляем для совместимости с FlowRings, но по смыслу:
-// meta = Base, cast = Farcaster, mon = Zora
 const CHOICES = [
-  { id: 0, key: "meta", label: "Base", emoji: "🔵", color: "#4b6bff", glow: "rgba(75,107,255,0.35)" },
-  { id: 1, key: "cast", label: "Farcaster", emoji: "💜", color: "#a855f7", glow: "rgba(168,85,247,0.35)" },
-  { id: 2, key: "mon",  label: "Zora", emoji: "🌀", color: "#00ffd5", glow: "rgba(0,255,213,0.35)" },
+  {
+    id: 0,
+    key: "meta",
+    label: "Base",
+    emoji: "🔵",
+    color: "#4b6bff",
+    glow: "rgba(75,107,255,0.35)",
+  },
+  {
+    id: 1,
+    key: "cast",
+    label: "Farcaster",
+    emoji: "💜",
+    color: "#a855f7",
+    glow: "rgba(168,85,247,0.35)",
+  },
+  {
+    id: 2,
+    key: "mon",
+    label: "Zora",
+    emoji: "🌀",
+    color: "#00ffd5",
+    glow: "rgba(0,255,213,0.35)",
+  },
 ];
 
-// ===== APP =====
+// === WAGMI CONFIG (как в доке) ===
+const config = createConfig({
+  chains: [baseSepolia],
+  transports: {
+    [baseSepolia.id]: http(), // можно подставить свой RPC
+  },
+  connectors: [
+    farcasterMiniApp(),
+    baseAccount({
+      appName: "TriBalance",
+      appLogoUrl: "https://base.org/logo.png",
+    }),
+  ],
+});
+
+const queryClient = new QueryClient();
+
+// Обёртка: провайдеры wagmi + react-query
 export default function App() {
-  // Base Account SDK provider
-  const [provider, setProvider] = useState(null);
+  return (
+    <WagmiProvider config={config}>
+      <QueryClientProvider client={queryClient}>
+        <TriBalanceApp />
+      </QueryClientProvider>
+    </WagmiProvider>
+  );
+}
 
-  // Адреса
-  const [universalAddress, setUniversalAddress] = useState(null);
-  const [subAddress, setSubAddress] = useState(null);
-  const [smartAddr, setSmartAddr] = useState(null); // для UI — показывает активный аккаунт
+// ===== ОСНОВНОЙ КОМПОНЕНТ =====
+function TriBalanceApp() {
+  const { address, isConnected } = useAccount();
+  const { connect, connectors, isPending } = useConnect();
 
-  // Статус/данные
+  // Стейт
   const [powers, setPowers] = useState({ meta: 0, cast: 0, mon: 0 });
   const [message, setMessage] = useState("");
-  const [screen, setScreen] = useState("connect");
   const [loading, setLoading] = useState(false);
   const [lastOpHash, setLastOpHash] = useState(null);
   const [cooldownSec, setCooldownSec] = useState(0);
 
-  const connected = subAddress || universalAddress;
-
-  // Инициализация Base Account SDK
-useEffect(() => {
-  const init = async () => {
-    const sdk = createBaseAccountSDK({
-      appName: "TriBalance",
-      appLogoUrl: "https://base.org/logo.png",
-      appChainIds: [CHAIN_ID],   
-      subAccounts: {
-        creation: "on-connect",
-        defaultAccount: "sub",
-        funding: "spend-permissions",
-      },
-    });
-    setProvider(sdk.getProvider());
-  };
-  init();
-}, []);
-
-
-  // ethers-провайдер и контракт для чтения
-  const readContracts = useMemo(() => {
-    if (!provider) return null;
-    const ethersProvider = new ethers.BrowserProvider(provider);
-    const readContract = new ethers.Contract(CONTRACT_ADDRESS, READ_ABI, ethersProvider);
-    return { readContract, ethersProvider };
-  }, [provider]);
-
-  // Получить или создать sub-аккаунт для домена
-  const ensureSubForDomain = async (univ) => {
-    const res = await provider.request({
-      method: "wallet_getSubAccounts",
-      params: [{ account: univ, domain: window.location.origin }],
-    });
-    let sub = res?.subAccounts?.[0]?.address;
-    if (!sub) {
-      const created = await provider.request({
-        method: "wallet_addSubAccount",
-        params: [{ account: { type: "create" } }],
-      });
-      sub = created?.address;
-    }
-    return sub;
-  };
-
-  // Коннект кошелька (универсальный + sub-аккаунт)
-  const connectWallet = async () => {
-    try {
-      if (!provider) return setMessage("Provider not ready yet");
-      setMessage("Connecting Base Account…");
-
-      const accounts = await provider.request({ method: "eth_requestAccounts" });
-      const univ = accounts?.[0] || null;
-      if (!univ) throw new Error("No account returned");
-
-      setUniversalAddress(univ);
-      const sub = await ensureSubForDomain(univ);
-      setSubAddress(sub);
-      setSmartAddr(sub || univ);
-      setScreen("app");
-      setMessage("");
-
-      await loadPowers(univ, sub);
-    } catch (e) {
-      console.error(e);
-      setMessage(humanError(e));
-    }
-  };
+  const connected = !!address;
 
   // Загрузка голосов и кулдауна
-  const loadPowers = async (univ, sub) => {
+  const loadPowers = async (addr) => {
     try {
-      if (!readContracts) return;
-      const { readContract } = readContracts;
+      const [baseVotes, farVotes, zoraVotes] = await readContract(config, {
+        address: CONTRACT_ADDRESS,
+        abi: CONTRACT_ABI,
+        functionName: "getVotes",
+        args: [],
+        chainId: CHAIN_ID,
+      });
 
-      const [baseVotes, farVotes, zoraVotes] = await readContract.getVotes();
       setPowers({
         meta: Number(baseVotes),
         cast: Number(farVotes),
         mon: Number(zoraVotes),
       });
 
-      const addr = sub || univ || smartAddr;
       if (addr) {
-        const cd = await readContract.timeUntilNextVote(addr);
+        const cd = await readContract(config, {
+          address: CONTRACT_ADDRESS,
+          abi: CONTRACT_ABI,
+          functionName: "timeUntilNextVote",
+          args: [addr],
+          chainId: CHAIN_ID,
+        });
         setCooldownSec(Number(cd));
       }
     } catch (e) {
@@ -139,88 +124,105 @@ useEffect(() => {
     }
   };
 
-  // Периодическое обновление круговой диаграммы
+  // Периодическое обновление диаграммы
   useEffect(() => {
-    if (!readContracts || !connected) return;
-    const id = setInterval(() => {
-      loadPowers(universalAddress, subAddress);
-    }, 8000);
+    if (!connected) return;
+    loadPowers(address);
+    const id = setInterval(() => loadPowers(address), 8000);
     return () => clearInterval(id);
-  }, [readContracts, connected, universalAddress, subAddress]);
+  }, [connected, address]);
 
-  // Голосование через Base smart account (wallet_sendCalls)
+  // Connect Base Account (для браузера / fallback — в Base App farcasterMiniApp сам подключит)
+  const connectWallet = async () => {
+    try {
+      setMessage("");
+      const connector = connectors[0];
+      if (!connector) {
+        setMessage("No wallet connectors available");
+        return;
+      }
+      await connect({ connector });
+    } catch (e) {
+      console.error(e);
+      setMessage(humanError(e));
+    }
+  };
+
+  // Голосование через sendCalls (wagmi / Base Account)
   const handleVote = async (choiceId) => {
     try {
-      if (!provider) return setMessage("Provider not ready yet");
-      if (!connected) return setMessage("Connect Base Account first");
-
+      if (!connected || !address)
+        return setMessage("Connect Base Account first");
       setLoading(true);
       setMessage("");
       setLastOpHash(null);
 
-      const from = subAddress || universalAddress;
-
-      // предварительная проверка кулдауна
-      if (readContracts) {
-        const { readContract } = readContracts;
-        const can = await readContract.canVote(from);
-        if (!can) {
-          const cd = await readContract.timeUntilNextVote(from);
-          setCooldownSec(Number(cd));
-          setMessage(`You can vote again in ~${Math.ceil(Number(cd) / 60)} minutes.`);
-          setLoading(false);
-          return;
-        }
-      }
-
-      const voteIface = new ethers.Interface(WRITE_ABI);
-      const voteData = voteIface.encodeFunctionData("vote", [choiceId]);
-
-      const res = await provider.request({
-        method: "wallet_sendCalls",
-        params: [
-          {
-            version: "2.0.0",
-            atomicRequired: true,
-            chainId: CHAIN_ID_HEX,
-            from,
-            calls: [{ to: CONTRACT_ADDRESS, data: voteData, value: "0x0" }],
-          },
-        ],
+      // Проверка кулдауна через canVote
+      const can = await readContract(config, {
+        address: CONTRACT_ADDRESS,
+        abi: CONTRACT_ABI,
+        functionName: "canVote",
+        args: [address],
+        chainId: CHAIN_ID,
       });
 
-      const id = res?.id || res;
-
-      // ждём CONFIRMED через wallet_getCallsStatus
-      let txHash = null;
-      for (let i = 0; i < 15; i++) {
-        try {
-          const st = await provider.request({
-            method: "wallet_getCallsStatus",
-            params: [{ id }],
-          });
-          if (st?.status === "CONFIRMED") {
-            txHash =
-              st?.transactions?.[0]?.hash ||
-              st?.txHash ||
-              st?.transactionHash ||
-              null;
-            break;
-          }
-          if (st?.status === "FAILED" || st?.status === "REJECTED") {
-            setMessage("Transaction failed / rejected");
-            break;
-          }
-        } catch {}
-        await new Promise((r) => setTimeout(r, 900));
+      if (!can) {
+        const cd = await readContract(config, {
+          address: CONTRACT_ADDRESS,
+          abi: CONTRACT_ABI,
+          functionName: "timeUntilNextVote",
+          args: [address],
+          chainId: CHAIN_ID,
+        });
+        const cdNum = Number(cd);
+        setCooldownSec(cdNum);
+        setMessage(
+          `You can vote again in ~${Math.ceil(cdNum / 60)} minutes.`
+        );
+        setLoading(false);
+        return;
       }
 
-      if (txHash) {
-        setLastOpHash(txHash);
-        setMessage("✅ Vote cast!");
-      }
+      // Кодируем вызов vote(option)
+      const data = encodeFunctionData({
+        abi: CONTRACT_ABI,
+        functionName: "vote",
+        args: [choiceId],
+      });
 
-      await loadPowers(universalAddress, subAddress);
+      // Проверяем paymaster capabilities (по доке)
+      const capabilities = await getCapabilities(config, {
+        account: address,
+      });
+      const chainCaps = capabilities[CHAIN_ID];
+      const supportsPaymaster = chainCaps?.paymasterService?.supported;
+
+      // Отправляем батч (здесь один call) через sendCalls
+      const id = await sendCalls(config, {
+        account: address,
+        chainId: CHAIN_ID,
+        calls: [
+          {
+            to: CONTRACT_ADDRESS,
+            data,
+          },
+        ],
+        // Если хочешь спонсировать газ — подставь свой paymaster URL
+        capabilities: supportsPaymaster
+          ? {
+              paymasterService: {
+                // TODO: положить ключ в env и подставить отсюда
+                url: "https://api.developer.coinbase.com/rpc/v1/base-sepolia/YOUR_KEY",
+              },
+            }
+          : undefined,
+      });
+
+      // В Mini App Base Account сам трекает батч по id, txHash может быть в статусе,
+      // но в простом варианте просто покажем id
+      setLastOpHash(String(id));
+      setMessage("✅ Vote request sent!");
+      await loadPowers(address);
     } catch (e) {
       console.error(e);
       setMessage(humanError(e));
@@ -231,7 +233,7 @@ useEffect(() => {
 
   // === UI ===
 
-  if (screen === "connect") {
+  if (!connected) {
     return (
       <Shell>
         <Header />
@@ -239,10 +241,14 @@ useEffect(() => {
           <p className="muted">Welcome to</p>
           <h1 className="title">TriBalance</h1>
           <p className="muted">
-            Vote with a Base Smart Account across Base, Farcaster & Zora.
+            Vote with a Base Account across Base, Farcaster &amp; Zora.
           </p>
-          <Button primary onClick={connectWallet}>
-            Connect Base Account
+          <Button
+            primary
+            onClick={connectWallet}
+            disabled={isPending || loading}
+          >
+            {isPending ? "Connecting…" : "Connect Base Account"}
           </Button>
           {message && <p className="msg">{message}</p>}
         </Card>
@@ -264,43 +270,38 @@ useEffect(() => {
       {/* Smart Account block */}
       <Card glow>
         <div className="row">
-          <span className="muted">Smart Account</span>
+          <span className="muted">Base Account</span>
           <a
             className="link"
-            href={smartAddr ? monadAddressUrl(smartAddr) : "#"}
+            href={address ? monadAddressUrl(address) : "#"}
             target="_blank"
             rel="noreferrer"
           >
-            {smartAddr ? `${smartAddr.slice(0, 6)}…${smartAddr.slice(-4)}` : "—"}
+            {address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "—"}
           </a>
         </div>
         {lastOpHash && (
           <div className="row" style={{ marginTop: 6 }}>
-            <span className="muted">Last tx</span>
+            <span className="muted">Last batch id / tx</span>
             <a
               className="link"
               href={userOpTrackUrl(lastOpHash)}
               target="_blank"
               rel="noreferrer"
             >
-              {lastOpHash.slice(0, 10)}…
+              {String(lastOpHash).slice(0, 10)}…
             </a>
           </div>
         )}
       </Card>
 
-      {/* Balance of powers — КРУГОВОЙ ВАРИАНТ */}
+      {/* Balance of powers — КРУГОВАЯ ДИАГРАММА */}
       <Card>
         <h3 className="cardTitle">Balance of Powers</h3>
         <FlowRings pct={pct} values={powers} />
         <div className="chips">
           {CHOICES.map((c) => (
-            <Chip
-              key={c.id}
-              active={false}
-              color={c.color}
-              glow={c.glow}
-            >
+            <Chip key={c.id} active={false} color={c.color} glow={c.glow}>
               <span style={{ fontSize: 18 }}>{c.emoji}</span> {c.label}
             </Chip>
           ))}
@@ -323,7 +324,8 @@ useEffect(() => {
 
       {cooldownSec > 0 && (
         <p className="msg">
-          Cooldown: you can vote again in ~{Math.ceil(cooldownSec / 60)} minutes.
+          Cooldown: you can vote again in ~{Math.ceil(cooldownSec / 60)}{" "}
+          minutes.
         </p>
       )}
 
@@ -334,7 +336,7 @@ useEffect(() => {
   );
 }
 
-/* === остальной UI (Header, Footer, Shell, Card, FlowRings, Chip, SectionTitle, Button, ActionCard, CSS, helpers) оставляем БЕЗ ИЗМЕНЕНИЙ === */
+/* ==== ДАЛЬШЕ — ТВОЙ UI БЕЗ ИЗМЕНЕНИЙ ==== */
 
 function Header() {
   return (
@@ -359,7 +361,7 @@ function Footer() {
         textAlign: "center",
       }}
     >
-      Now powered by Base Smart Accounts
+      Now powered by Base Account
     </div>
   );
 }
@@ -394,7 +396,6 @@ function Card({ children, glow }) {
   );
 }
 
-// FlowRings / Chip / SectionTitle / Button / ActionCard / CSS / helpers — используем твои же версии из файла:
 const globalCss = `
 .title { font-size: 38px; font-weight: 800; letter-spacing: .5px; margin: 6px 0 4px; }
 .muted { opacity: .75 }
