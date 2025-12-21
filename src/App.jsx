@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { WagmiProvider, useAccount, useConnect } from "wagmi";
 import { base } from "wagmi/chains"; // 🆕 Base Mainnet
 import { baseAccount } from "wagmi/connectors";
-// ❌ Убрали farcasterMiniApp - используем только baseAccount
+import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { sendCalls, getCapabilities, readContract } from "@wagmi/core";
@@ -56,7 +56,7 @@ const config = createConfig({
     [base.id]: http(), // 🆕 Base Mainnet transport
   },
   connectors: [
-    // ❌ Убрали farcasterMiniApp() - используем только baseAccount
+    farcasterMiniApp(),
     baseAccount({
       appName: "TriBalance",
       appLogoUrl: "https://base.org/logo.png",
@@ -185,27 +185,20 @@ function TriBalanceApp() {
         .map(b => b.toString(16).padStart(2, '0'))
         .join('')}`;
 
-      const capabilities = await getCapabilities(config, {
-        account: address,
-      });
+      // 💰 Проверяем наличие Paymaster URL
+      const paymasterUrl = import.meta.env.VITE_PAYMASTER_URL;
       
-      console.log('🔍 All capabilities:', capabilities);
-      console.log('🔍 Chain caps:', capabilities[CHAIN_ID]);
-      
-      const chainCaps = capabilities[CHAIN_ID];
-      const supportsPaymaster = chainCaps?.paymasterService?.supported;
-      
-      console.log('💰 Supports paymaster?', supportsPaymaster);
+      console.log('🔍 Paymaster URL:', paymasterUrl ? '✅ Есть' : '❌ Нет');
 
-      // 🆕 Добавляем Builder Code в capabilities
+      // 🆕 Добавляем capabilities
       const callCapabilities = {
-        ...(supportsPaymaster && {
+        // Если есть Paymaster URL, добавляем его
+        ...(paymasterUrl && {
           paymasterService: {
-            url: import.meta.env.VITE_PAYMASTER_URL || 
-                 "https://api.developer.coinbase.com/rpc/v1/base/YOUR_COINBASE_API_KEY",
+            url: paymasterUrl,
           },
         }),
-        // 🆕 Builder Code для attribution
+        // Builder Code для attribution
         dataSuffix: builderCodeHex,
       };
       
