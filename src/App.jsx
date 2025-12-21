@@ -180,8 +180,10 @@ function TriBalanceApp() {
         args: [choiceId],
       });
 
-      // 🆕 Builder Code - конвертируем в hex
-      const builderCodeHex = `0x${Buffer.from(BUILDER_CODE, 'utf8').toString('hex')}`;
+      // 🆕 Builder Code - конвертируем в hex (browser-compatible)
+      const builderCodeHex = `0x${Array.from(new TextEncoder().encode(BUILDER_CODE))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('')}`;
 
       const capabilities = await getCapabilities(config, {
         account: address,
