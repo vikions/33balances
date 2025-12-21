@@ -5,7 +5,7 @@ import { baseAccount } from "wagmi/connectors";
 import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { sendCalls, getCapabilities, readContract } from "@wagmi/core";
+import { sendCalls, getCapabilities, readContract, getAccounts } from "@wagmi/core";
 import { parseAbi, encodeFunctionData } from "viem";
 
 // === ADDRESS / CHAIN ===
@@ -152,8 +152,10 @@ function TriBalanceApp() {
       setLoading(true);
       setMessage("");
 
-      // ВАЖНО: account берём как в доке, а не useAccount().address
-      const [account] = await config.getClient().getAddresses();
+      // ✅ ВАЖНО: account берём "как в доке по смыслу", но через wagmi core action (у тебя нет getClient().getAddresses)
+      const accounts = await getAccounts(config);
+      const account = accounts?.[0];
+
       if (!account) {
         setLoading(false);
         return setMessage("No connected Base Account found");
@@ -194,8 +196,7 @@ function TriBalanceApp() {
 
       // 2) Check Base mainnet chain ID capabilities
       const baseCapabilities = capabilities?.[8453];
-      const supportsPaymaster =
-        !!baseCapabilities?.paymasterService?.supported;
+      const supportsPaymaster = !!baseCapabilities?.paymasterService?.supported;
 
       // 3) sendCalls with optional paymaster capability
       await sendCalls(config, {
