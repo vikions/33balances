@@ -1,17 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { WagmiProvider, useAccount, useConnect } from "wagmi";
 import { base } from "wagmi/chains";
 import { baseAccount } from "wagmi/connectors";
 import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { sendCalls, readContract, getCallsStatus } from "@wagmi/core";
+import { sendCalls, getCapabilities, readContract } from "@wagmi/core";
 import { parseAbi, encodeFunctionData } from "viem";
 
 // === ADDRESS / CHAIN ===
-const CONTRACT_ADDRESS = "0x578D6936914d01a7d6225401715A4ee75C7D7602"; // Base Mainnet
+const CONTRACT_ADDRESS = "0x578D6936914d01a7d6225401715A4ee75C7D7602";
 const CHAIN_ID = base.id; // 8453
-const BUILDER_CODE = "bc_jbfpmpzq";
+
+// Paymaster (Coinbase Developer Platform)
+const PAYMASTER_URL =
+  "https://api.developer.coinbase.com/rpc/v1/base/mmo6mwwplQQx927oL1bz30eQZ33eEDOc";
 
 // === ABI ===
 const CONTRACT_ABI = parseAbi([
@@ -23,24 +26,45 @@ const CONTRACT_ABI = parseAbi([
 
 // === CHOICES ===
 const CHOICES = [
-  { id: 0, key: "meta", label: "Base", emoji: "🔵", color: "#4b6bff", glow: "rgba(75,107,255,0.35)" },
-  { id: 1, key: "cast", label: "Farcaster", emoji: "💜", color: "#a855f7", glow: "rgba(168,85,247,0.35)" },
-  { id: 2, key: "mon", label: "Zora", emoji: "🌀", color: "#00ffd5", glow: "rgba(0,255,213,0.35)" },
+  {
+    id: 0,
+    key: "meta",
+    label: "Base",
+    emoji: "🔵",
+    color: "#4b6bff",
+    glow: "rgba(75,107,255,0.35)",
+  },
+  {
+    id: 1,
+    key: "cast",
+    label: "Farcaster",
+    emoji: "💜",
+    color: "#a855f7",
+    glow: "rgba(168,85,247,0.35)",
+  },
+  {
+    id: 2,
+    key: "mon",
+    label: "Zora",
+    emoji: "🌀",
+    color: "#00ffd5",
+    glow: "rgba(0,255,213,0.35)",
+  },
 ];
 
 // === WAGMI CONFIG ===
-// ВАЖНО: baseAccount первым, чтобы не промахиваться с connectors[0]
+// СТРОГО как в доке: farcasterMiniApp() первым, baseAccount() вторым
 const config = createConfig({
   chains: [base],
   transports: {
     [base.id]: http(),
   },
   connectors: [
+    farcasterMiniApp(),
     baseAccount({
       appName: "TriBalance",
       appLogoUrl: "https://base.org/logo.png",
     }),
-    farcasterMiniApp(),
   ],
 });
 
@@ -63,22 +87,9 @@ function TriBalanceApp() {
   const [powers, setPowers] = useState({ meta: 0, cast: 0, mon: 0 });
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
-
-  // sendCalls возвращает calls id (НЕ tx hash)
-  const [lastCallsId, setLastCallsId] = useState(null);
-  // реальный tx hash, если получится достать через getCallsStatus
-  const [lastTxHash, setLastTxHash] = useState(null);
-
   const [cooldownSec, setCooldownSec] = useState(0);
 
   const connected = !!address;
-
-  // Builder Code -> hex
-  const builderCodeHex = useMemo(() => {
-    return `0x${Array.from(new TextEncoder().encode(BUILDER_CODE))
-      .map((b) => b.toString(16).padStart(2, "0"))
-      .join("")}`;
-  }, []);
 
   const loadPowers = async (addr) => {
     try {
@@ -122,19 +133,12 @@ function TriBalanceApp() {
     try {
       setMessage("");
 
-      // выбираем строго baseAccount
-      const baseAcc =
-        connectors.find((c) => c.id === "baseAccount") ??
-        connectors.find((c) => (c.name || "").toLowerCase().includes("base")) ??
-        connectors[0];
+      // СТРОГО как в доке/описании:
+      // в Base App farcasterMiniApp() автоматически подключается к Base Account пользователя
+      const connector = connectors[0];
+      if (!connector) return setMessage("No wallet connectors available");
 
-      if (!baseAcc) {
-        setMessage("No wallet connectors available");
-        return;
-      }
-
-      console.log("🔌 Using connector:", { id: baseAcc.id, name: baseAcc.name });
-      await connect({ connector: baseAcc });
+      await connect({ connector });
     } catch (e) {
       console.error(e);
       setMessage(humanError(e));
@@ -143,18 +147,23 @@ function TriBalanceApp() {
 
   const handleVote = async (choiceId) => {
     try {
-      if (!connected || !address) return setMessage("Connect Base Account first");
+      if (!connected) return setMessage("Open inside Base App / connect first");
 
       setLoading(true);
       setMessage("");
-      setLastCallsId(null);
-      setLastTxHash(null);
+
+      // ВАЖНО: account берём как в доке, а не useAccount().address
+      const [account] = await config.getClient().getAddresses();
+      if (!account) {
+        setLoading(false);
+        return setMessage("No connected Base Account found");
+      }
 
       const can = await readContract(config, {
         address: CONTRACT_ADDRESS,
         abi: CONTRACT_ABI,
         functionName: "canVote",
-        args: [address],
+        args: [account],
         chainId: CHAIN_ID,
       });
 
@@ -163,7 +172,7 @@ function TriBalanceApp() {
           address: CONTRACT_ADDRESS,
           abi: CONTRACT_ABI,
           functionName: "timeUntilNextVote",
-          args: [address],
+          args: [account],
           chainId: CHAIN_ID,
         });
         const cdNum = Number(cd);
@@ -179,61 +188,36 @@ function TriBalanceApp() {
         args: [choiceId],
       });
 
-      const paymasterUrl = import.meta.env.VITE_PAYMASTER_URL;
+      // СТРОГО как в доке:
+      // 1) getCapabilities
+      const capabilities = await getCapabilities(config, { account });
 
-      console.log("🔍 Paymaster URL:", paymasterUrl ? "✅ Есть" : "❌ Нет");
-      console.log("🏷️ Builder code hex:", builderCodeHex);
+      // 2) Check Base mainnet chain ID capabilities
+      const baseCapabilities = capabilities?.[8453];
+      const supportsPaymaster =
+        !!baseCapabilities?.paymasterService?.supported;
 
-      const capabilities = {
-        ...(paymasterUrl && {
-          paymasterService: {
-            url: paymasterUrl,
-          },
-        }),
-        // builder code на уровне capabilities
-        dataSuffix: builderCodeHex,
-      };
-
-      const calls = [
-        {
-          to: CONTRACT_ADDRESS,
-          data,
-          // builder code на уровне конкретного call (часто это критично)
-          dataSuffix: builderCodeHex,
-        },
-      ];
-
-      console.log("📤 calls:", calls);
-      console.log("📤 capabilities:", capabilities);
-
-      const callsId = await sendCalls(config, {
-        account: address,
-        chainId: CHAIN_ID,
-        calls,
-        capabilities,
+      // 3) sendCalls with optional paymaster capability
+      await sendCalls(config, {
+        account,
+        calls: [{ to: CONTRACT_ADDRESS, data }],
+        chainId: 8453,
+        capabilities: supportsPaymaster
+          ? {
+              paymasterService: {
+                url: PAYMASTER_URL,
+              },
+            }
+          : undefined,
       });
 
-      setLastCallsId(String(callsId));
-      setMessage("✅ Vote request sent!");
-      await loadPowers(address);
+      setMessage(
+        supportsPaymaster
+          ? "✅ Vote sent (gas sponsored via paymaster)!"
+          : "✅ Vote sent!"
+      );
 
-      // Пытаемся получить реальный tx hash (не всегда доступно сразу)
-      try {
-        const status = await getCallsStatus(config, { id: callsId });
-
-        const txHash =
-          status?.receipts?.[0]?.transactionHash ||
-          status?.receipts?.[0]?.transaction?.hash ||
-          status?.transactions?.[0]?.hash ||
-          null;
-
-        if (txHash) setLastTxHash(txHash);
-
-        console.log("📌 Calls status:", status);
-        console.log("🧾 tx hash:", txHash);
-      } catch (e) {
-        console.warn("getCallsStatus failed (not fatal):", e);
-      }
+      await loadPowers(account);
     } catch (e) {
       console.error(e);
       setMessage(humanError(e));
@@ -251,9 +235,15 @@ function TriBalanceApp() {
         <Card>
           <p className="muted">Welcome to</p>
           <h1 className="title">TriBalance</h1>
-          <p className="muted">Vote with a Base Account across Base, Farcaster &amp; Zora.</p>
+          <p className="muted">
+            Vote with a Base Account across Base, Farcaster &amp; Zora.
+          </p>
 
-          <Button primary onClick={connectWallet} disabled={isPending || loading}>
+          <Button
+            primary
+            onClick={connectWallet}
+            disabled={isPending || loading}
+          >
             {isPending ? "Connecting…" : "Connect Base Account"}
           </Button>
 
@@ -274,10 +264,10 @@ function TriBalanceApp() {
     <Shell>
       <Header />
 
-      {/* Smart Account block */}
+      {/* Account block */}
       <Card glow>
         <div className="row">
-          <span className="muted">Base Account</span>
+          <span className="muted">Connected address</span>
           <a
             className="link"
             href={address ? `https://basescan.org/address/${address}` : "#"}
@@ -287,27 +277,10 @@ function TriBalanceApp() {
             {address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "—"}
           </a>
         </div>
-
-        {lastCallsId && (
-          <div className="row" style={{ marginTop: 6 }}>
-            <span className="muted">Last calls id</span>
-            <span className="tiny">{String(lastCallsId).slice(0, 14)}…</span>
-          </div>
-        )}
-
-        {lastTxHash && (
-          <div className="row" style={{ marginTop: 6 }}>
-            <span className="muted">Last tx</span>
-            <a
-              className="link"
-              href={`https://basescan.org/tx/${lastTxHash}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {String(lastTxHash).slice(0, 10)}…
-            </a>
-          </div>
-        )}
+        <div className="tiny muted" style={{ marginTop: 6 }}>
+          Inside Base App, the Farcaster mini-app connector auto-connects to the
+          user's Base Account.
+        </div>
       </Card>
 
       {/* Balance of powers */}
@@ -338,7 +311,9 @@ function TriBalanceApp() {
       ))}
 
       {cooldownSec > 0 && (
-        <p className="msg">Cooldown: you can vote again in ~{Math.ceil(cooldownSec / 60)} minutes.</p>
+        <p className="msg">
+          Cooldown: you can vote again in ~{Math.ceil(cooldownSec / 60)} minutes.
+        </p>
       )}
 
       {message && <p className="msg">{message}</p>}
@@ -385,7 +360,8 @@ function Shell({ children }) {
           "radial-gradient(1200px 600px at 50% -10%, rgba(0,255,213,0.08), transparent), radial-gradient(900px 600px at -10% 10%, rgba(168,85,247,0.08), transparent), #0a0b0d",
         color: "#eaeef7",
         padding: 18,
-        fontFamily: "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto",
+        fontFamily:
+          "Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto",
         maxWidth: 440,
         margin: "0 auto",
       }}
@@ -489,9 +465,33 @@ function FlowRings({ pct, values }) {
   }, [pct.meta, pct.cast, pct.mon]);
 
   const rings = [
-    { key: "meta", color1: "#4b6bff", color2: "#7fb1ff", radius: 88, width: 12, label: `Base ${Math.round(anim.meta)}%`, value: values.meta },
-    { key: "cast", color1: "#8f4df1", color2: "#c79bff", radius: 68, width: 12, label: `Farcaster ${Math.round(anim.cast)}%`, value: values.cast },
-    { key: "mon", color1: "#00ffd5", color2: "#7dffe9", radius: 48, width: 12, label: `Zora ${Math.round(anim.mon)}%`, value: values.mon },
+    {
+      key: "meta",
+      color1: "#4b6bff",
+      color2: "#7fb1ff",
+      radius: 88,
+      width: 12,
+      label: `Base ${Math.round(anim.meta)}%`,
+      value: values.meta,
+    },
+    {
+      key: "cast",
+      color1: "#8f4df1",
+      color2: "#c79bff",
+      radius: 68,
+      width: 12,
+      label: `Farcaster ${Math.round(anim.cast)}%`,
+      value: values.cast,
+    },
+    {
+      key: "mon",
+      color1: "#00ffd5",
+      color2: "#7dffe9",
+      radius: 48,
+      width: 12,
+      label: `Zora ${Math.round(anim.mon)}%`,
+      value: values.mon,
+    },
   ];
 
   return (
@@ -508,7 +508,15 @@ function FlowRings({ pct, values }) {
         </defs>
 
         <g className="halo">
-          <circle cx="120" cy="120" r="92" fill="none" stroke="url(#gradHalo)" strokeWidth="20" opacity="0.12" />
+          <circle
+            cx="120"
+            cy="120"
+            r="92"
+            fill="none"
+            stroke="url(#gradHalo)"
+            strokeWidth="20"
+            opacity="0.12"
+          />
           <defs>
             <linearGradient id="gradHalo" x1="0%" y1="0%" x2="100%" y2="0%">
               <stop offset="0%" stopColor="#00ffd5" />
@@ -525,7 +533,14 @@ function FlowRings({ pct, values }) {
           const gap = C - dash;
           return (
             <g key={r.key} filter="url(#glow)">
-              <circle cx="120" cy="120" r={r.radius} fill="none" stroke="#101319" strokeWidth={r.width} />
+              <circle
+                cx="120"
+                cy="120"
+                r={r.radius}
+                fill="none"
+                stroke="#101319"
+                strokeWidth={r.width}
+              />
               <circle
                 cx="120"
                 cy="120"
@@ -539,7 +554,13 @@ function FlowRings({ pct, values }) {
                 className="ringStroke"
               />
               <defs>
-                <linearGradient id={`grad-${r.key}`} x1="0%" y1="0%" x2="100%" y2="0%">
+                <linearGradient
+                  id={`grad-${r.key}`}
+                  x1="0%"
+                  y1="0%"
+                  x2="100%"
+                  y2="0%"
+                >
                   <stop offset="0%" stopColor={r.color1} />
                   <stop offset="100%" stopColor={r.color2} />
                 </linearGradient>
@@ -549,10 +570,24 @@ function FlowRings({ pct, values }) {
         })}
 
         <g className="centerText">
-          <text x="120" y="110" textAnchor="middle" fontSize="22" fontWeight="800" fill="#eaeef7">
+          <text
+            x="120"
+            y="110"
+            textAnchor="middle"
+            fontSize="22"
+            fontWeight="800"
+            fill="#eaeef7"
+          >
             {Math.max(pct.meta, pct.cast, pct.mon)}%
           </text>
-          <text x="120" y="132" textAnchor="middle" fontSize="12" fill="#9aa4b2" letterSpacing=".3px">
+          <text
+            x="120"
+            y="132"
+            textAnchor="middle"
+            fontSize="12"
+            fill="#9aa4b2"
+            letterSpacing=".3px"
+          >
             network balance
           </text>
         </g>
@@ -561,7 +596,13 @@ function FlowRings({ pct, values }) {
       <div className="ringLabels">
         {rings.map((r) => (
           <div key={r.key} className="labelRow">
-            <span className="dot" style={{ background: r.color1, boxShadow: `0 0 10px ${r.color1}55` }} />
+            <span
+              className="dot"
+              style={{
+                background: r.color1,
+                boxShadow: `0 0 10px ${r.color1}55`,
+              }}
+            />
             <span className="lbl">
               {r.label} <span className="count">({r.value})</span>
             </span>
@@ -601,7 +642,12 @@ function SectionTitle({ children }) {
 
 function Button({ children, primary, onClick, disabled }) {
   return (
-    <button className="btn" data-primary={primary ? "1" : "0"} onClick={onClick} disabled={disabled}>
+    <button
+      className="btn"
+      data-primary={primary ? "1" : "0"}
+      onClick={onClick}
+      disabled={disabled}
+    >
       {children}
       <style>{buttonCss}</style>
     </button>
@@ -627,5 +673,11 @@ function ActionCard({ label, emoji, color, glow, onClick, disabled }) {
 }
 
 function humanError(e) {
-  return e?.shortMessage || e?.reason || e?.data?.message || e?.message || String(e);
+  return (
+    e?.shortMessage ||
+    e?.reason ||
+    e?.data?.message ||
+    e?.message ||
+    String(e)
+  );
 }
