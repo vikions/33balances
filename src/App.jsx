@@ -1,20 +1,19 @@
 import { useEffect, useState } from "react";
 import { WagmiProvider, useAccount, useConnect } from "wagmi";
-import { baseSepolia } from "wagmi/chains";
+import { base } from "wagmi/chains"; // 🆕 Base Mainnet
 import { baseAccount } from "wagmi/connectors";
 import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { sendCalls, getCapabilities, readContract } from "@wagmi/core";
 import { parseAbi, encodeFunctionData } from "viem";
-import { userOpTrackUrl, monadAddressUrl } from "./smartAccount";
 
 // === ADDRESS / CHAIN ===
-const CONTRACT_ADDRESS = "0xA6e3b00f25569644b3e66D214585567872c94B8B";
-const CHAIN_ID = baseSepolia.id; // 84532
+const CONTRACT_ADDRESS = "0x578D6936914d01a7d6225401715A4ee75C7D7602"; // 🆕 Base Mainnet
+const CHAIN_ID = base.id; // 🆕 8453 (Base Mainnet)
+const BUILDER_CODE = "bc_jbfpmpzq"; // 🆕 Your Builder Code
 
 // === ABI ===
-
 const CONTRACT_ABI = parseAbi([
   "function getVotes() view returns (uint256 baseVotes, uint256 farcasterVotes, uint256 zoraVotes)",
   "function canVote(address user) view returns (bool)",
@@ -50,11 +49,11 @@ const CHOICES = [
   },
 ];
 
-// === WAGMI CONFIG (как в доке) ===
+// === WAGMI CONFIG ===
 const config = createConfig({
-  chains: [baseSepolia],
+  chains: [base], // 🆕 Base Mainnet
   transports: {
-    [baseSepolia.id]: http(), 
+    [base.id]: http(), // 🆕 Base Mainnet transport
   },
   connectors: [
     farcasterMiniApp(),
@@ -67,7 +66,6 @@ const config = createConfig({
 
 const queryClient = new QueryClient();
 
-
 export default function App() {
   return (
     <WagmiProvider config={config}>
@@ -78,12 +76,10 @@ export default function App() {
   );
 }
 
-
 function TriBalanceApp() {
   const { address, isConnected } = useAccount();
   const { connect, connectors, isPending } = useConnect();
 
-  
   const [powers, setPowers] = useState({ meta: 0, cast: 0, mon: 0 });
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -92,7 +88,6 @@ function TriBalanceApp() {
 
   const connected = !!address;
 
- 
   const loadPowers = async (addr) => {
     try {
       const [baseVotes, farVotes, zoraVotes] = await readContract(config, {
@@ -124,7 +119,6 @@ function TriBalanceApp() {
     }
   };
 
- 
   useEffect(() => {
     if (!connected) return;
     loadPowers(address);
@@ -132,7 +126,6 @@ function TriBalanceApp() {
     return () => clearInterval(id);
   }, [connected, address]);
 
- 
   const connectWallet = async () => {
     try {
       setMessage("");
@@ -148,7 +141,6 @@ function TriBalanceApp() {
     }
   };
 
-  
   const handleVote = async (choiceId) => {
     try {
       if (!connected || !address)
@@ -157,7 +149,6 @@ function TriBalanceApp() {
       setMessage("");
       setLastOpHash(null);
 
-      
       const can = await readContract(config, {
         address: CONTRACT_ADDRESS,
         abi: CONTRACT_ABI,
@@ -183,21 +174,33 @@ function TriBalanceApp() {
         return;
       }
 
-      
       const data = encodeFunctionData({
         abi: CONTRACT_ABI,
         functionName: "vote",
         args: [choiceId],
       });
 
-      
+      // 🆕 Builder Code - конвертируем в hex
+      const builderCodeHex = `0x${Buffer.from(BUILDER_CODE, 'utf8').toString('hex')}`;
+
       const capabilities = await getCapabilities(config, {
         account: address,
       });
       const chainCaps = capabilities[CHAIN_ID];
       const supportsPaymaster = chainCaps?.paymasterService?.supported;
 
-      
+      // 🆕 Добавляем Builder Code в capabilities
+      const callCapabilities = {
+        ...(supportsPaymaster && {
+          paymasterService: {
+            url: import.meta.env.VITE_PAYMASTER_URL || 
+                 "https://api.developer.coinbase.com/rpc/v1/base/YOUR_COINBASE_API_KEY",
+          },
+        }),
+        // 🆕 Builder Code для attribution
+        dataSuffix: builderCodeHex,
+      };
+
       const id = await sendCalls(config, {
         account: address,
         chainId: CHAIN_ID,
@@ -207,18 +210,9 @@ function TriBalanceApp() {
             data,
           },
         ],
-        
-        capabilities: supportsPaymaster
-          ? {
-              paymasterService: {
-                
-                url: "https://api.developer.coinbase.com/rpc/v1/base-sepolia/YOUR_KEY",
-              },
-            }
-          : undefined,
+        capabilities: callCapabilities,
       });
 
-      
       setLastOpHash(String(id));
       setMessage("✅ Vote request sent!");
       await loadPowers(address);
@@ -272,7 +266,7 @@ function TriBalanceApp() {
           <span className="muted">Base Account</span>
           <a
             className="link"
-            href={address ? monadAddressUrl(address) : "#"}
+            href={address ? `https://basescan.org/address/${address}` : "#"}
             target="_blank"
             rel="noreferrer"
           >
@@ -284,7 +278,7 @@ function TriBalanceApp() {
             <span className="muted">Last batch id / tx</span>
             <a
               className="link"
-              href={userOpTrackUrl(lastOpHash)}
+              href={`https://basescan.org/tx/${lastOpHash}`}
               target="_blank"
               rel="noreferrer"
             >
@@ -294,7 +288,7 @@ function TriBalanceApp() {
         )}
       </Card>
 
-      {/* Balance of powers  */}
+      {/* Balance of powers */}
       <Card>
         <h3 className="cardTitle">Balance of Powers</h3>
         <FlowRings pct={pct} values={powers} />
@@ -335,8 +329,6 @@ function TriBalanceApp() {
   );
 }
 
-
-
 function Header() {
   return (
     <div className="header">
@@ -360,7 +352,7 @@ function Footer() {
         textAlign: "center",
       }}
     >
-      Now powered by Base Account
+      Now powered by Base Account on Base Mainnet
     </div>
   );
 }
