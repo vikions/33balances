@@ -5,7 +5,7 @@ import { baseAccount } from "wagmi/connectors";
 import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { sendCalls, getCapabilities, readContract, getAccounts } from "@wagmi/core";
+import { sendCalls, getCapabilities, readContract } from "@wagmi/core";
 import { parseAbi, encodeFunctionData } from "viem";
 
 // === ADDRESS / CHAIN ===
@@ -133,8 +133,7 @@ function TriBalanceApp() {
     try {
       setMessage("");
 
-      // СТРОГО как в доке/описании:
-      // в Base App farcasterMiniApp() автоматически подключается к Base Account пользователя
+      // В Base App farcasterMiniApp() auto-connect'ится к Base Account
       const connector = connectors[0];
       if (!connector) return setMessage("No wallet connectors available");
 
@@ -147,19 +146,14 @@ function TriBalanceApp() {
 
   const handleVote = async (choiceId) => {
     try {
-      if (!connected) return setMessage("Open inside Base App / connect first");
+      if (!connected || !address)
+        return setMessage("Open inside Base App / connect first");
 
       setLoading(true);
       setMessage("");
 
-      // ✅ ВАЖНО: account берём "как в доке по смыслу", но через wagmi core action (у тебя нет getClient().getAddresses)
-      const accounts = await getAccounts(config);
-      const account = accounts?.[0];
-
-      if (!account) {
-        setLoading(false);
-        return setMessage("No connected Base Account found");
-      }
+      // ✅ На твоей версии wagmi это самый совместимый "account"
+      const account = address;
 
       const can = await readContract(config, {
         address: CONTRACT_ADDRESS,
@@ -190,7 +184,6 @@ function TriBalanceApp() {
         args: [choiceId],
       });
 
-      // СТРОГО как в доке:
       // 1) getCapabilities
       const capabilities = await getCapabilities(config, { account });
 
@@ -323,6 +316,8 @@ function TriBalanceApp() {
     </Shell>
   );
 }
+
+// ====== UI COMPONENTS (как у тебя было) ======
 
 function Header() {
   return (
