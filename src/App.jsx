@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { WagmiProvider, useAccount, useConnect } from "wagmi";
 import { base } from "wagmi/chains"; // 🆕 Base Mainnet
 import { baseAccount } from "wagmi/connectors";
-import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
+// ❌ Убрали farcasterMiniApp - используем только baseAccount
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { sendCalls, getCapabilities, readContract } from "@wagmi/core";
@@ -56,7 +56,7 @@ const config = createConfig({
     [base.id]: http(), // 🆕 Base Mainnet transport
   },
   connectors: [
-    farcasterMiniApp(),
+    // ❌ Убрали farcasterMiniApp() - используем только baseAccount
     baseAccount({
       appName: "TriBalance",
       appLogoUrl: "https://base.org/logo.png",
@@ -188,8 +188,14 @@ function TriBalanceApp() {
       const capabilities = await getCapabilities(config, {
         account: address,
       });
+      
+      console.log('🔍 All capabilities:', capabilities);
+      console.log('🔍 Chain caps:', capabilities[CHAIN_ID]);
+      
       const chainCaps = capabilities[CHAIN_ID];
       const supportsPaymaster = chainCaps?.paymasterService?.supported;
+      
+      console.log('💰 Supports paymaster?', supportsPaymaster);
 
       // 🆕 Добавляем Builder Code в capabilities
       const callCapabilities = {
@@ -202,6 +208,8 @@ function TriBalanceApp() {
         // 🆕 Builder Code для attribution
         dataSuffix: builderCodeHex,
       };
+      
+      console.log('📤 Call capabilities:', callCapabilities);
 
       const id = await sendCalls(config, {
         account: address,
