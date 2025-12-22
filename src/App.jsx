@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { WagmiProvider, useAccount, useConnect } from "wagmi";
+import { WagmiProvider, useAccount, useConnect, useSwitchChain } from "wagmi";
 import { base } from "wagmi/chains";
 import { baseAccount } from "wagmi/connectors";
 import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
@@ -81,8 +81,9 @@ export default function App() {
 }
 
 function TriBalanceApp() {
-  const { address } = useAccount();
+  const { address, chain } = useAccount();
   const { connect, connectors, isPending } = useConnect();
+  const { switchChain } = useSwitchChain();
 
   const [powers, setPowers] = useState({ meta: 0, cast: 0, mon: 0 });
   const [message, setMessage] = useState("");
@@ -90,6 +91,16 @@ function TriBalanceApp() {
   const [cooldownSec, setCooldownSec] = useState(0);
 
   const connected = !!address;
+
+  // Автоматическое переключение на Base при подключении
+  useEffect(() => {
+    if (connected && chain && chain.id !== 8453) {
+      console.log(`Wrong chain detected: ${chain.id}, switching to Base (8453)...`);
+      setMessage("⚠️ Switching to Base network...");
+      switchChain?.({ chainId: 8453 });
+      setTimeout(() => setMessage(""), 3000);
+    }
+  }, [connected, chain, switchChain]);
 
   const loadPowers = async (addr) => {
     try {
