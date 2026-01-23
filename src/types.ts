@@ -2,13 +2,14 @@ export type PolymarketMarket = {
   id: string;
   question: string;
   endTime: string;
-  marketYesPct: number;
-  marketNoPct: number;
+  marketUpPct: number;
+  marketDownPct: number;
   url: string;
   source: string;
+  slug?: string;
 };
 
-export type StakeSide = "YES" | "NO";
+export type StakeSide = "UP" | "DOWN";
 
 export type ArenaStake = {
   id: string;

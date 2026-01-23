@@ -62,7 +62,7 @@ const IQ_STORAGE_KEY = "arenaIQ";
 const STAKES_STORAGE_KEY = "arenaStakes";
 const IQ_START = 100;
 const STAKE_PRESETS = [1, 2, 5, 10];
-const POLYMARKET_API_PATH = "/api/polymarket/markets";
+const POLYMARKET_FEATURED_PATH = "/api/polymarket/featured";
 const POLYMARKET_DIAGNOSTICS_PATH = "/api/polymarket/diagnostics";
 
 // === WAGMI CONFIG ===
@@ -548,15 +548,17 @@ const arenaCss = `
 .iqValue { font-size:18px; font-weight:800; }
 .iqRank { font-size:12px; opacity:.7; }
 .iqLocked { font-size:11px; opacity:.6; margin-top:2px; }
-.arenaFeed { display:flex; flex-direction:column; gap:12px; margin-top:12px; }
-.arenaCard { background: rgba(12,15,19,.7); border:1px solid #2a2e36; border-radius:16px; padding:14px; }
-.arenaTop { display:flex; justify-content:space-between; gap:10px; }
+.arenaCard { background: rgba(12,15,19,.7); border:1px solid #2a2e36; border-radius:16px; padding:14px; margin-top:12px; }
+.featuredTag { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.6px; color:#7fb1ff; margin-bottom:6px; }
+.arenaTop { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
 .arenaQuestion { font-size:14px; font-weight:700; line-height:1.4; }
-.arenaCountdown { font-size:12px; opacity:.7; white-space:nowrap; }
+.arenaCountdownWrap { text-align:right; }
+.arenaCountdownLabel { font-size:11px; opacity:.6; margin-bottom:2px; }
+.arenaCountdown { font-size:12px; opacity:.85; white-space:nowrap; font-weight:600; }
 .beliefRow { display:flex; gap:8px; margin:10px 0; }
 .beliefPill { flex:1; display:flex; justify-content:space-between; padding:6px 10px; border-radius:999px; font-size:12px; border:1px solid #2a2e36; background: rgba(19,22,28,.8); }
-.beliefPill[data-side="yes"] { border-color: rgba(127,177,255,.4); }
-.beliefPill[data-side="no"] { border-color: rgba(255,120,120,.4); }
+.beliefPill[data-side="up"] { border-color: rgba(78,201,176,.5); }
+.beliefPill[data-side="down"] { border-color: rgba(255,120,120,.4); }
 .stakeRow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px; }
 .stakePresets { display:flex; gap:6px; flex-wrap:wrap; }
 .stakePreset { border:1px solid #2a2e36; background: rgba(20,22,27,.8); color:#eaeef7; border-radius:10px; padding:6px 10px; font-size:12px; cursor:pointer; }
@@ -564,13 +566,9 @@ const arenaCss = `
 .stakeInput { flex:1; min-width:90px; border:1px solid #2a2e36; background: rgba(10,12,16,.8); color:#eaeef7; padding:7px 10px; border-radius:10px; font-size:12px; }
 .stakeActions { display:flex; gap:8px; }
 .stakeAction { flex:1; border-radius:12px; padding:10px 12px; font-weight:700; cursor:pointer; border:1px solid transparent; }
-.stakeAction[data-side="yes"] { background: linear-gradient(90deg, rgba(70,102,255,.9), rgba(127,177,255,.9)); color:#fff; }
-.stakeAction[data-side="no"] { background: linear-gradient(90deg, rgba(255,111,111,.85), rgba(255,166,166,.9)); color:#fff; }
+.stakeAction[data-side="up"] { background: linear-gradient(90deg, rgba(60,186,153,.9), rgba(115,232,197,.9)); color:#0a0b0d; }
+.stakeAction[data-side="down"] { background: linear-gradient(90deg, rgba(255,111,111,.85), rgba(255,166,166,.9)); color:#fff; }
 .stakeAction:disabled { opacity:.6; cursor:not-allowed; }
-.stakesList { display:flex; flex-direction:column; gap:10px; }
-.stakeItem { border:1px solid #2a2e36; border-radius:12px; padding:10px 12px; background: rgba(16,18,24,.7); }
-.stakeTitle { font-size:13px; font-weight:600; }
-.stakeMeta { font-size:12px; opacity:.7; margin-top:4px; }
 `;
 
 const diagnosticsCss = `
@@ -593,12 +591,9 @@ function EntryScreen({ onEnter }) {
         <div className="entryHalo" />
         <div className="entryText">
           <div>Opinions are cheap.</div>
-          <div>Reality is not.</div>
+          <div>Reality keeps score.</div>
           <div className="entrySpacer" />
-          <div>Here, you don't bet money.</div>
-          <div>You stake your IQ.</div>
-          <div className="entrySpacer" />
-          <div>Let reality decide who's smart.</div>
+          <div>Stake your IQ - not your money.</div>
         </div>
         <div className="entryCta">
           <Button primary onClick={onEnter}>
@@ -614,14 +609,16 @@ function EntryScreen({ onEnter }) {
 function Arena({ onToast }) {
   const nowMs = useNow(1000);
 
-  /** @type {[PolymarketMarket[], Function]} */
-  const [markets, setMarkets] = useState([]);
-  const [marketsLoading, setMarketsLoading] = useState(true);
-  const [marketsError, setMarketsError] = useState("");
-  const [stakeInputs, setStakeInputs] = useState({});
-  const [iq, setIq] = useState(() => readStoredNumber(IQ_STORAGE_KEY, IQ_START));
+  const initialStakes = useMemo(() => loadStoredStakes(), []);
   /** @type {[ArenaStake[], Function]} */
-  const [stakes, setStakes] = useState(() => loadStoredStakes());
+  const [stakes, setStakes] = useState(initialStakes);
+  const [iq, setIq] = useState(() => getInitialIq(initialStakes));
+
+  /** @type {[PolymarketMarket | null, Function]} */
+  const [featured, setFeatured] = useState(null);
+  const [featuredLoading, setFeaturedLoading] = useState(true);
+  const [featuredError, setFeaturedError] = useState("");
+  const [stakeInput, setStakeInput] = useState("");
 
   const lockedIq = useMemo(
     () =>
@@ -634,34 +631,29 @@ function Arena({ onToast }) {
   const availableIq = Math.max(0, iq - lockedIq);
   const rank = getRank(iq);
 
-  const fetchMarkets = useCallback(async ({ refresh = false } = {}) => {
-    setMarketsLoading(true);
-    setMarketsError("");
+  const fetchFeatured = useCallback(async () => {
+    setFeaturedLoading(true);
+    setFeaturedError("");
     try {
-      const url = refresh
-        ? `${POLYMARKET_API_PATH}?refresh=1`
-        : POLYMARKET_API_PATH;
-      const response = await fetch(url);
+      const response = await fetch(POLYMARKET_FEATURED_PATH);
       if (!response.ok) {
-        throw new Error(`Markets request failed (${response.status})`);
+        throw new Error("Featured request failed (" + response.status + ")");
       }
       const data = await response.json();
-      if (!Array.isArray(data)) {
-        throw new Error("Markets response was not a list.");
+      if (!data || typeof data !== "object") {
+        throw new Error("Featured response was empty.");
       }
-      setMarkets(data);
+      setFeatured(data);
     } catch (error) {
-      setMarketsError(error?.message || "Failed to load markets.");
+      setFeaturedError(error?.message || "Failed to load featured market.");
     } finally {
-      setMarketsLoading(false);
+      setFeaturedLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchMarkets();
-    const id = setInterval(() => fetchMarkets(), 30_000);
-    return () => clearInterval(id);
-  }, [fetchMarkets]);
+    fetchFeatured();
+  }, [fetchFeatured]);
 
   // Keep IQ and stakes in localStorage for Phase 1 persistence.
   useEffect(() => {
@@ -684,7 +676,7 @@ function Arena({ onToast }) {
       if (!Number.isFinite(endMs) || endMs > now) return stake;
 
       // Phase 1 demo: resolve outcomes randomly once the market ends.
-      const resolvedSide = Math.random() < 0.5 ? "YES" : "NO";
+      const resolvedSide = Math.random() < 0.5 ? "UP" : "DOWN";
       const win = resolvedSide === stake.side;
       delta += win ? stake.stake : -stake.stake;
       updated = true;
@@ -703,18 +695,18 @@ function Arena({ onToast }) {
     }
   }, [stakes, nowMs]);
 
-  const handleStakeInput = useCallback((marketId, value) => {
-    setStakeInputs((prev) => ({ ...prev, [marketId]: value }));
-  }, []);
-
-  const handleQuickStake = useCallback((marketId, value) => {
-    setStakeInputs((prev) => ({ ...prev, [marketId]: String(value) }));
+  const handleQuickStake = useCallback((value) => {
+    setStakeInput(String(value));
   }, []);
 
   const handleStake = useCallback(
-    (market, side) => {
-      const rawValue = stakeInputs[market.id];
-      const amount = Math.floor(Number(rawValue));
+    (side) => {
+      if (!featured) {
+        onToast?.("Featured market unavailable.");
+        return;
+      }
+
+      const amount = Math.floor(Number(stakeInput));
       if (!amount || amount <= 0) {
         onToast?.("Enter a stake amount.");
         return;
@@ -725,10 +717,10 @@ function Arena({ onToast }) {
       }
 
       const stake = {
-        id: makeStakeId(market.id),
-        claimId: market.id,
-        question: market.question,
-        endTime: market.endTime,
+        id: makeStakeId(featured.id),
+        claimId: featured.id,
+        question: featured.question,
+        endTime: featured.endTime,
         side,
         stake: amount,
         timestamp: Date.now(),
@@ -736,16 +728,14 @@ function Arena({ onToast }) {
       };
 
       setStakes((prev) => [stake, ...prev]);
-      setStakeInputs((prev) => ({ ...prev, [market.id]: "" }));
-      onToast?.(`You staked ${amount} IQ on ${side} (offchain demo).`);
+      setStakeInput("");
+      onToast?.("Staked " + amount + " IQ on " + side + ".");
     },
-    [availableIq, onToast, stakeInputs]
+    [availableIq, featured, onToast, stakeInput]
   );
 
-  const sortedStakes = useMemo(
-    () => [...stakes].sort((a, b) => b.timestamp - a.timestamp),
-    [stakes]
-  );
+  const endTimeMs = featured ? Date.parse(featured.endTime || "") : Number.NaN;
+  const isEnded = Number.isFinite(endTimeMs) && endTimeMs <= nowMs;
 
   return (
     <div>
@@ -753,7 +743,7 @@ function Arena({ onToast }) {
         <div className="arenaHeader">
           <div>
             <div className="arenaTitle">The Arena</div>
-            <div className="arenaSub">Stake IQ on live market beliefs.</div>
+            <div className="arenaSub">One market. One stance. One score.</div>
           </div>
           <div className="iqPanel">
             <div className="iqValue">Your IQ: {iq}</div>
@@ -765,136 +755,93 @@ function Arena({ onToast }) {
         </div>
       </Card>
 
-      {marketsLoading && markets.length === 0 && (
+      {featuredLoading && !featured && (
         <Card>
-          <p className="muted">Loading markets...</p>
+          <p className="muted">Loading featured market...</p>
         </Card>
       )}
 
-      {marketsError && (
+      {featuredError && (
         <Card>
-          <p className="msg">{marketsError}</p>
+          <p className="msg">{featuredError}</p>
         </Card>
       )}
 
-      {!marketsLoading && markets.length === 0 && !marketsError && (
-        <Card>
-          <p className="muted">No active markets found.</p>
-        </Card>
-      )}
-
-      <div className="arenaFeed">
-        {markets.map((market) => {
-          const endMs = Date.parse(market.endTime || "");
-          const isEnded = Number.isFinite(endMs) && endMs <= nowMs;
-          const stakeValue = stakeInputs[market.id] | "";
-          return (
-            <div className="arenaCard" key={market.id}>
-              <div className="arenaTop">
-                <div className="arenaQuestion">{market.question}</div>
-                <div className="arenaCountdown">
-                  {formatCountdown(market.endTime, nowMs)}
-                </div>
-              </div>
-              <div className="tiny muted" style={{ marginTop: 6 }}>
-                Market belief
-              </div>
-              <div className="beliefRow">
-                <div className="beliefPill" data-side="yes">
-                  <span>YES</span>
-                  <span>{market.marketYesPct}%</span>
-                </div>
-                <div className="beliefPill" data-side="no">
-                  <span>NO</span>
-                  <span>{market.marketNoPct}%</span>
-                </div>
-              </div>
-              <div className="tiny muted" style={{ marginBottom: 6 }}>
-                Stake your IQ
-              </div>
-              <div className="stakeRow">
-                <div className="stakePresets">
-                  {STAKE_PRESETS.map((value) => (
-                    <button
-                      key={value}
-                      className="stakePreset"
-                      data-active={Number(stakeValue) === value ? "1" : "0"}
-                      onClick={() => handleQuickStake(market.id, value)}
-                      type="button"
-                    >
-                      {value}
-                    </button>
-                  ))}
-                </div>
-                <input
-                  className="stakeInput"
-                  type="number"
-                  min="1"
-                  step="1"
-                  inputMode="numeric"
-                  placeholder="Custom"
-                  value={stakeValue}
-                  onChange={(event) =>
-                    handleStakeInput(market.id, event.target.value)
-                  }
-                />
-              </div>
-              <div className="stakeActions">
-                <button
-                  className="stakeAction"
-                  data-side="yes"
-                  onClick={() => handleStake(market, "YES")}
-                  disabled={isEnded || availableIq <= 0}
-                  type="button"
-                >
-                  YES
-                </button>
-                <button
-                  className="stakeAction"
-                  data-side="no"
-                  onClick={() => handleStake(market, "NO")}
-                  disabled={isEnded || availableIq <= 0}
-                  type="button"
-                >
-                  NO
-                </button>
+      {featured && (
+        <div className="arenaCard">
+          <div className="featuredTag">Featured</div>
+          <div className="arenaTop">
+            <div className="arenaQuestion">{featured.question}</div>
+            <div className="arenaCountdownWrap">
+              <div className="arenaCountdownLabel">Countdown to resolve</div>
+              <div className="arenaCountdown">
+                {formatCountdown(featured.endTime, nowMs)}
               </div>
             </div>
-          );
-        })}
-      </div>
-
-      <Card>
-        <h3 className="cardTitle">My Stakes</h3>
-        {sortedStakes.length === 0 ? (
-          <p className="muted">No stakes yet.</p>
-        ) : (
-          <div className="stakesList">
-            {sortedStakes.map((stake) => {
-              const resolved = stake.status === "resolved";
-              const win = resolved && stake.resolvedSide === stake.side;
-              const statusLabel = resolved
-                ? win
-                  ? "Won"
-                  : "Lost"
-                : "Pending";
-              const outcomeLabel = resolved
-                ? `Resolved: ${stake.resolvedSide}`
-                : "Waiting on resolution.";
-
-              return (
-                <div className="stakeItem" key={stake.id}>
-                  <div className="stakeTitle">{stake.question}</div>
-                  <div className="stakeMeta">
-                    {stake.stake} IQ on {stake.side} | {statusLabel}
-                  </div>
-                  <div className="stakeMeta">{outcomeLabel}</div>
-                </div>
-              );
-            })}
           </div>
-        )}
-      </Card>
+          <div className="tiny muted" style={{ marginTop: 10 }}>
+            Market belief
+          </div>
+          <div className="beliefRow">
+            <div className="beliefPill" data-side="up">
+              <span>UP</span>
+              <span>{featured.marketUpPct}%</span>
+            </div>
+            <div className="beliefPill" data-side="down">
+              <span>DOWN</span>
+              <span>{featured.marketDownPct}%</span>
+            </div>
+          </div>
+          <div className="tiny muted" style={{ marginBottom: 6 }}>
+            Stake your IQ
+          </div>
+          <div className="stakeRow">
+            <div className="stakePresets">
+              {STAKE_PRESETS.map((value) => (
+                <button
+                  key={value}
+                  className="stakePreset"
+                  data-active={Number(stakeInput) === value ? "1" : "0"}
+                  onClick={() => handleQuickStake(value)}
+                  type="button"
+                >
+                  {value}
+                </button>
+              ))}
+            </div>
+            <input
+              className="stakeInput"
+              type="number"
+              min="1"
+              step="1"
+              inputMode="numeric"
+              placeholder="Custom"
+              value={stakeInput}
+              onChange={(event) => setStakeInput(event.target.value)}
+            />
+          </div>
+          <div className="stakeActions">
+            <button
+              className="stakeAction"
+              data-side="up"
+              onClick={() => handleStake("UP")}
+              disabled={isEnded || availableIq <= 0}
+              type="button"
+            >
+              UP
+            </button>
+            <button
+              className="stakeAction"
+              data-side="down"
+              onClick={() => handleStake("DOWN")}
+              disabled={isEnded || availableIq <= 0}
+              type="button"
+            >
+              DOWN
+            </button>
+          </div>
+        </div>
+      )}
       <style>{arenaCss}</style>
     </div>
   );
@@ -905,14 +852,11 @@ function DiagnosticsScreen({ onRefresh }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const loadDiagnostics = useCallback(async (refresh = false) => {
+  const loadDiagnostics = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const url = refresh
-        ? `${POLYMARKET_DIAGNOSTICS_PATH}?refresh=1`
-        : POLYMARKET_DIAGNOSTICS_PATH;
-      const response = await fetch(url);
+      const response = await fetch(POLYMARKET_DIAGNOSTICS_PATH);
       if (!response.ok) {
         throw new Error(`Diagnostics request failed (${response.status})`);
       }
@@ -932,11 +876,13 @@ function DiagnosticsScreen({ onRefresh }) {
   }, [loadDiagnostics]);
 
   const handleRefresh = async () => {
-    const ok = await loadDiagnostics(true);
+    const ok = await loadDiagnostics();
     if (ok) onRefresh?.();
   };
 
   const lastFetchLabel = formatTimestamp(data?.lastFetchTime);
+  const latencyLabel =
+    typeof data?.lastLatencyMs === "number" ? `${data.lastLatencyMs}ms` : "n/a";
   const cacheLabel =
     data?.lastCacheHit === null || data?.lastCacheHit === undefined
       ? "n/a"
@@ -944,8 +890,6 @@ function DiagnosticsScreen({ onRefresh }) {
         ? "hit"
         : "miss";
   const errorLabel = data?.lastError || "None";
-  const countLabel =
-    typeof data?.lastCount === "number" ? String(data.lastCount) : "0";
 
   return (
     <Card>
@@ -956,8 +900,8 @@ function DiagnosticsScreen({ onRefresh }) {
           <span className="diagValue">{lastFetchLabel}</span>
         </div>
         <div className="diagRow">
-          <span className="diagLabel">Markets</span>
-          <span className="diagValue">{countLabel}</span>
+          <span className="diagLabel">Last latency</span>
+          <span className="diagValue">{latencyLabel}</span>
         </div>
         <div className="diagRow">
           <span className="diagLabel">Cache</span>
@@ -1276,11 +1220,18 @@ function writeSessionFlag(key, value) {
   }
 }
 
-function readStoredNumber(key, fallback) {
-  if (typeof window === "undefined") return fallback;
-  const raw = window.localStorage.getItem(key);
+function getInitialIq(stakes) {
+  if (typeof window === "undefined") return IQ_START;
+  const raw = window.localStorage.getItem(IQ_STORAGE_KEY);
   const value = Number(raw);
-  return Number.isFinite(value) ? value : fallback;
+  if (!Number.isFinite(value) || value < 0) return IQ_START;
+  if (value === 0) {
+    const hasResolved = Array.isArray(stakes)
+      ? stakes.some((stake) => stake.status === "resolved")
+      : false;
+    if (!hasResolved) return IQ_START;
+  }
+  return value;
 }
 
 /** @returns {ArenaStake[]} */
@@ -1291,13 +1242,15 @@ function loadStoredStakes() {
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
-    return parsed.map((stake) => ({
-      ...stake,
-      status:
-        stake.status === "resolved" || stake.resolvedSide
-          ? "resolved"
-          : "pending",
-    }));
+    return parsed
+      .map((stake) => ({
+        ...stake,
+        status:
+          stake.status === "resolved" || stake.resolvedSide
+            ? "resolved"
+            : "pending",
+      }))
+      .filter((stake) => stake.side === "UP" || stake.side === "DOWN");
   } catch {
     return [];
   }
@@ -1315,17 +1268,17 @@ function writeStoredJson(key, value) {
 
 function formatCountdown(endTime, nowMs) {
   const endMs = Date.parse(endTime || "");
-  if (!Number.isFinite(endMs)) return "End time TBD";
+  if (!Number.isFinite(endMs)) return "TBD";
   const delta = endMs - nowMs;
-  if (delta <= 0) return "Ended";
+  if (delta <= 0) return "Resolved";
   const totalSeconds = Math.floor(delta / 1000);
   const days = Math.floor(totalSeconds / 86400);
   const hours = Math.floor((totalSeconds % 86400) / 3600);
   const minutes = Math.floor((totalSeconds % 3600) / 60);
   const seconds = totalSeconds % 60;
-  if (days > 0) return `Ends in ${days}d ${hours}h ${minutes}m`;
-  if (hours > 0) return `Ends in ${hours}h ${minutes}m ${seconds}s`;
-  return `Ends in ${minutes}m ${seconds}s`;
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
+  return `${minutes}m ${seconds}s`;
 }
 
 function formatTimestamp(value) {

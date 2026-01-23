@@ -25,7 +25,10 @@
 - `ActionCard` list for `CHOICES` and `handleVote` for transaction submission.
 
 ## Server / API routes
-- Vite dev/preview middleware exposes `/api/polymarket/markets` and `/api/polymarket/diagnostics` via `src/server/polymarketProxy.js`, wired in `vite.config.js`.
+- Vercel-style serverless endpoints live under `api/polymarket/`:
+  - `api/polymarket/featured.js` (featured market)
+  - `api/polymarket/diagnostics.js` (cache/latency status)
+- Vite dev/preview middleware in `src/server/polymarketProxy.js` mirrors these endpoints for local dev (`vite.config.js`).
 
 ## Contracts / assets
 - Solidity contract: `contracts/ProofOfTriBalance.sol`.
