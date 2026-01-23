@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { WagmiProvider, useAccount, useConnect, useSwitchChain } from "wagmi";
 import { base } from "wagmi/chains";
 import { baseAccount } from "wagmi/connectors";
@@ -7,6 +7,10 @@ import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { sendCalls, getCapabilities, readContract } from "@wagmi/core";
 import { parseAbi, encodeFunctionData } from "viem";
+
+/** @typedef {import("./types").PolymarketMarket} PolymarketMarket */
+/** @typedef {import("./types").ArenaStake} ArenaStake */
+/** @typedef {import("./types").StakeSide} StakeSide */
 
 // === ADDRESS / CHAIN ===
 const CONTRACT_ADDRESS = "0x578D6936914d01a7d6225401715A4ee75C7D7602";
@@ -52,6 +56,15 @@ const CHOICES = [
   },
 ];
 
+// === ARENA CONSTANTS ===
+const ENTRY_FLAG_KEY = "hasEnteredArena";
+const IQ_STORAGE_KEY = "arenaIQ";
+const STAKES_STORAGE_KEY = "arenaStakes";
+const IQ_START = 100;
+const STAKE_PRESETS = [1, 2, 5, 10];
+const POLYMARKET_API_PATH = "/api/polymarket/markets";
+const POLYMARKET_DIAGNOSTICS_PATH = "/api/polymarket/diagnostics";
+
 // === WAGMI CONFIG ===
 // СТРОГО как в доке: farcasterMiniApp() первым, baseAccount() вторым
 const config = createConfig({
@@ -84,13 +97,36 @@ function TriBalanceApp() {
   const { address, chain } = useAccount();
   const { connect, connectors, isPending } = useConnect();
   const { switchChain } = useSwitchChain();
+  const { path, navigate } = useClientPath();
 
   const [powers, setPowers] = useState({ meta: 0, cast: 0, mon: 0 });
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
   const [cooldownSec, setCooldownSec] = useState(0);
+  const [hasEnteredArena, setHasEnteredArena] = useState(() =>
+    readSessionFlag(ENTRY_FLAG_KEY)
+  );
+  const [toast, setToast] = useState("");
+  const toastTimerRef = useRef(null);
 
   const connected = !!address;
+
+  const showToast = useCallback((nextMessage) => {
+    setToast(nextMessage);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(""), 3200);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    };
+  }, []);
+
+  const enterArena = () => {
+    writeSessionFlag(ENTRY_FLAG_KEY, true);
+    setHasEnteredArena(true);
+  };
 
   // Автоматическое переключение на Base при подключении
   useEffect(() => {
@@ -233,27 +269,22 @@ function TriBalanceApp() {
 
   // === UI ===
 
-  if (!connected) {
+
+  if (!hasEnteredArena) {
     return (
       <Shell>
-        <Header />
-        <Card>
-          <p className="muted">Welcome to</p>
-          <h1 className="title">TriBalance</h1>
-          <p className="muted">
-            Vote with a Base Account across Base, Farcaster &amp; Zora.
-          </p>
+        <Header showNav={false} />
+        <EntryScreen onEnter={enterArena} />
+      </Shell>
+    );
+  }
 
-          <Button
-            primary
-            onClick={connectWallet}
-            disabled={isPending || loading}
-          >
-            {isPending ? "Connecting…" : "Connect Base Account"}
-          </Button>
-
-          {message && <p className="msg">{message}</p>}
-        </Card>
+  if (path === "/diagnostics") {
+    return (
+      <Shell>
+        <Header activePath={path} onNavigate={navigate} />
+        <DiagnosticsScreen onRefresh={() => showToast("Diagnostics refreshed.")} />
+        {toast && <Toast message={toast} />}
       </Shell>
     );
   }
@@ -267,77 +298,125 @@ function TriBalanceApp() {
 
   return (
     <Shell>
-      <Header />
+      <Header activePath={path} onNavigate={navigate} />
+      <Arena onToast={showToast} />
 
-      {/* Account block */}
-      <Card glow>
-        <div className="row">
-          <span className="muted">Connected address</span>
-          <a
-            className="link"
-            href={address ? `https://basescan.org/address/${address}` : "#"}
-            target="_blank"
-            rel="noreferrer"
+      {!connected ? (
+        <Card>
+          <p className="muted">Welcome to</p>
+          <h1 className="title">TriBalance</h1>
+          <p className="muted">
+            Vote with a Base Account across Base, Farcaster &amp; Zora.
+          </p>
+
+          <Button
+            primary
+            onClick={connectWallet}
+            disabled={isPending || loading}
           >
-            {address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "—"}
-          </a>
-        </div>
-        <div className="tiny muted" style={{ marginTop: 6 }}>
-          Inside Base App, the Farcaster mini-app connector auto-connects to the
-          user's Base Account.
-        </div>
-      </Card>
+            {isPending ? "Connecting..." : "Connect Base Account"}
+          </Button>
 
-      {/* Balance of powers */}
-      <Card>
-        <h3 className="cardTitle">Balance of Powers</h3>
-        <FlowRings pct={pct} values={powers} />
-        <div className="chips">
+          {message && <p className="msg">{message}</p>}
+        </Card>
+      ) : (
+        <>
+          {/* Account block */}
+          <Card glow>
+            <div className="row">
+              <span className="muted">Connected address</span>
+              <a
+                className="link"
+                href={address ? "https://basescan.org/address/" + address : "#"}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {address
+                  ? address.slice(0, 6) + "..." + address.slice(-4)
+                  : "-"}
+              </a>
+            </div>
+            <div className="tiny muted" style={{ marginTop: 6 }}>
+              Inside Base App, the Farcaster mini-app connector auto-connects to the
+              user's Base Account.
+            </div>
+          </Card>
+
+          {/* Balance of powers */}
+          <Card>
+            <h3 className="cardTitle">Balance of Powers</h3>
+            <FlowRings pct={pct} values={powers} />
+            <div className="chips">
+              {CHOICES.map((c) => (
+                <Chip key={c.id} active={false} color={c.color} glow={c.glow}>
+                  <span style={{ fontSize: 18 }}>{c.emoji}</span> {c.label}
+                </Chip>
+              ))}
+            </div>
+          </Card>
+
+          {/* Vote */}
+          <SectionTitle>Vote</SectionTitle>
           {CHOICES.map((c) => (
-            <Chip key={c.id} active={false} color={c.color} glow={c.glow}>
-              <span style={{ fontSize: 18 }}>{c.emoji}</span> {c.label}
-            </Chip>
+            <ActionCard
+              key={c.id}
+              label={"Vote " + c.label}
+              emoji={c.emoji}
+              color={c.color}
+              glow={c.glow}
+              disabled={loading || !connected}
+              onClick={() => handleVote(c.id)}
+            />
           ))}
-        </div>
-      </Card>
 
-      {/* Vote */}
-      <SectionTitle>Vote</SectionTitle>
-      {CHOICES.map((c) => (
-        <ActionCard
-          key={c.id}
-          label={`Vote ${c.label}`}
-          emoji={c.emoji}
-          color={c.color}
-          glow={c.glow}
-          disabled={loading || !connected}
-          onClick={() => handleVote(c.id)}
-        />
-      ))}
+          {cooldownSec > 0 && (
+            <p className="msg">
+              Cooldown: you can vote again in ~{Math.ceil(cooldownSec / 60)} minutes.
+            </p>
+          )}
 
-      {cooldownSec > 0 && (
-        <p className="msg">
-          Cooldown: you can vote again in ~{Math.ceil(cooldownSec / 60)} minutes.
-        </p>
+          {message && <p className="msg">{message}</p>}
+        </>
       )}
 
-      {message && <p className="msg">{message}</p>}
-
       <Footer />
+      {toast && <Toast message={toast} />}
     </Shell>
   );
 }
 
 // ====== UI COMPONENTS (как у тебя было) ======
 
-function Header() {
+function Header({ activePath = "/", onNavigate, showNav = true }) {
   return (
     <div className="header">
-      <div className="logoPulse" />
-      <div>
-        <div className="brand">TriBalance</div>
-        <div className="tagline">Base • Farcaster • Zora</div>
+      <div className="headerMain">
+        <div className="logoPulse" />
+        <div>
+          <div className="brand">TriBalance</div>
+          <div className="tagline">Base / Farcaster / Zora</div>
+        </div>
       </div>
+      {showNav && (
+        <div className="nav">
+          <button
+            className="navBtn"
+            data-active={activePath === "/" ? "1" : "0"}
+            onClick={() => onNavigate?.("/")}
+            type="button"
+          >
+            Arena
+          </button>
+          <button
+            className="navBtn"
+            data-active={activePath === "/diagnostics" ? "1" : "0"}
+            onClick={() => onNavigate?.("/diagnostics")}
+            type="button"
+          >
+            Diagnostics
+          </button>
+        </div>
+      )}
       <style>{headerCss}</style>
     </div>
   );
@@ -399,9 +478,13 @@ const globalCss = `
 `;
 
 const headerCss = `
-.header { display:flex; gap:12px; align-items:center; margin: 8px 0 16px; }
+.header { display:flex; justify-content:space-between; gap:12px; align-items:center; margin: 8px 0 16px; flex-wrap:wrap; }
+.headerMain { display:flex; gap:12px; align-items:center; }
 .brand { font-weight: 800; font-size: 22px; letter-spacing: .3px; }
 .tagline { opacity:.6; font-size:12px; margin-top:2px }
+.nav { display:flex; gap:6px; align-items:center; }
+.navBtn { font-size:11px; padding:6px 8px; border-radius:10px; background: rgba(20,22,27,.8); border:1px solid #2a2e36; color:#eaeef7; cursor:pointer; }
+.navBtn[data-active="1"]{ border-color:#7fb1ff; box-shadow: 0 0 0 1px rgba(127,177,255,.2); }
 .logoPulse{ width:14px; height:14px; border-radius:50%; background: radial-gradient(circle at 30% 30%, #00ffd5, #725bff); box-shadow: 0 0 18px rgba(0,255,213,.6), 0 0 30px rgba(114,91,255,.35); animation: pulse 2.2s ease-in-out infinite; }
 @keyframes pulse { 0%,100%{ transform: scale(1); opacity: .9 } 50%{ transform: scale(1.25); opacity: 1 } }
 `;
@@ -448,6 +531,462 @@ const flowCss = `
 .labelRow .lbl { opacity:.9 }
 .labelRow .count { opacity:.6; font-size:12px; }
 `;
+
+const entryCss = `
+.entryWrap { text-align:center; padding: 6px 4px 12px; }
+.entryHalo { height:6px; border-radius:999px; background: linear-gradient(90deg, rgba(0,255,213,.45), rgba(127,177,255,.45)); margin-bottom:14px; }
+.entryText { font-size:14px; line-height:1.6; letter-spacing:.2px; }
+.entrySpacer { height:10px; }
+.entryCta { margin-top:16px; }
+`;
+
+const arenaCss = `
+.arenaHeader { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+.arenaTitle { font-size:20px; font-weight:800; letter-spacing:.4px; }
+.arenaSub { font-size:12px; opacity:.6; margin-top:4px; }
+.iqPanel { text-align:right; }
+.iqValue { font-size:18px; font-weight:800; }
+.iqRank { font-size:12px; opacity:.7; }
+.iqLocked { font-size:11px; opacity:.6; margin-top:2px; }
+.arenaFeed { display:flex; flex-direction:column; gap:12px; margin-top:12px; }
+.arenaCard { background: rgba(12,15,19,.7); border:1px solid #2a2e36; border-radius:16px; padding:14px; }
+.arenaTop { display:flex; justify-content:space-between; gap:10px; }
+.arenaQuestion { font-size:14px; font-weight:700; line-height:1.4; }
+.arenaCountdown { font-size:12px; opacity:.7; white-space:nowrap; }
+.beliefRow { display:flex; gap:8px; margin:10px 0; }
+.beliefPill { flex:1; display:flex; justify-content:space-between; padding:6px 10px; border-radius:999px; font-size:12px; border:1px solid #2a2e36; background: rgba(19,22,28,.8); }
+.beliefPill[data-side="yes"] { border-color: rgba(127,177,255,.4); }
+.beliefPill[data-side="no"] { border-color: rgba(255,120,120,.4); }
+.stakeRow { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:10px; }
+.stakePresets { display:flex; gap:6px; flex-wrap:wrap; }
+.stakePreset { border:1px solid #2a2e36; background: rgba(20,22,27,.8); color:#eaeef7; border-radius:10px; padding:6px 10px; font-size:12px; cursor:pointer; }
+.stakePreset[data-active="1"] { border-color:#7fb1ff; box-shadow: 0 0 0 1px rgba(127,177,255,.2); }
+.stakeInput { flex:1; min-width:90px; border:1px solid #2a2e36; background: rgba(10,12,16,.8); color:#eaeef7; padding:7px 10px; border-radius:10px; font-size:12px; }
+.stakeActions { display:flex; gap:8px; }
+.stakeAction { flex:1; border-radius:12px; padding:10px 12px; font-weight:700; cursor:pointer; border:1px solid transparent; }
+.stakeAction[data-side="yes"] { background: linear-gradient(90deg, rgba(70,102,255,.9), rgba(127,177,255,.9)); color:#fff; }
+.stakeAction[data-side="no"] { background: linear-gradient(90deg, rgba(255,111,111,.85), rgba(255,166,166,.9)); color:#fff; }
+.stakeAction:disabled { opacity:.6; cursor:not-allowed; }
+.stakesList { display:flex; flex-direction:column; gap:10px; }
+.stakeItem { border:1px solid #2a2e36; border-radius:12px; padding:10px 12px; background: rgba(16,18,24,.7); }
+.stakeTitle { font-size:13px; font-weight:600; }
+.stakeMeta { font-size:12px; opacity:.7; margin-top:4px; }
+`;
+
+const diagnosticsCss = `
+.diagGrid { display:flex; flex-direction:column; gap:10px; }
+.diagRow { display:flex; justify-content:space-between; gap:12px; font-size:12px; }
+.diagLabel { opacity:.7; }
+.diagValue { font-weight:600; text-align:right; }
+.diagActions { margin-top:12px; }
+`;
+
+const toastCss = `
+.toast { position:fixed; left:50%; bottom:16px; transform: translateX(-50%); background: rgba(20,22,27,.95); border:1px solid #2a2e36; padding:10px 14px; border-radius:12px; font-size:12px; max-width:420px; width: calc(100% - 32px); text-align:center; box-shadow: 0 10px 30px rgba(0,0,0,.35); z-index:50; animation: toastIn .2s ease-out; }
+@keyframes toastIn { from { opacity:0; transform: translateX(-50%) translateY(6px); } to { opacity:1; transform: translateX(-50%) translateY(0); } }
+`;
+
+function EntryScreen({ onEnter }) {
+  return (
+    <Card glow>
+      <div className="entryWrap">
+        <div className="entryHalo" />
+        <div className="entryText">
+          <div>Opinions are cheap.</div>
+          <div>Reality is not.</div>
+          <div className="entrySpacer" />
+          <div>Here, you don't bet money.</div>
+          <div>You stake your IQ.</div>
+          <div className="entrySpacer" />
+          <div>Let reality decide who's smart.</div>
+        </div>
+        <div className="entryCta">
+          <Button primary onClick={onEnter}>
+            Enter the Arena
+          </Button>
+        </div>
+      </div>
+      <style>{entryCss}</style>
+    </Card>
+  );
+}
+
+function Arena({ onToast }) {
+  const nowMs = useNow(1000);
+
+  /** @type {[PolymarketMarket[], Function]} */
+  const [markets, setMarkets] = useState([]);
+  const [marketsLoading, setMarketsLoading] = useState(true);
+  const [marketsError, setMarketsError] = useState("");
+  const [stakeInputs, setStakeInputs] = useState({});
+  const [iq, setIq] = useState(() => readStoredNumber(IQ_STORAGE_KEY, IQ_START));
+  /** @type {[ArenaStake[], Function]} */
+  const [stakes, setStakes] = useState(() => loadStoredStakes());
+
+  const lockedIq = useMemo(
+    () =>
+      stakes.reduce(
+        (sum, stake) => (stake.status === "pending" ? sum + stake.stake : sum),
+        0
+      ),
+    [stakes]
+  );
+  const availableIq = Math.max(0, iq - lockedIq);
+  const rank = getRank(iq);
+
+  const fetchMarkets = useCallback(async ({ refresh = false } = {}) => {
+    setMarketsLoading(true);
+    setMarketsError("");
+    try {
+      const url = refresh
+        ? `${POLYMARKET_API_PATH}?refresh=1`
+        : POLYMARKET_API_PATH;
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Markets request failed (${response.status})`);
+      }
+      const data = await response.json();
+      if (!Array.isArray(data)) {
+        throw new Error("Markets response was not a list.");
+      }
+      setMarkets(data);
+    } catch (error) {
+      setMarketsError(error?.message || "Failed to load markets.");
+    } finally {
+      setMarketsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchMarkets();
+    const id = setInterval(() => fetchMarkets(), 30_000);
+    return () => clearInterval(id);
+  }, [fetchMarkets]);
+
+  // Keep IQ and stakes in localStorage for Phase 1 persistence.
+  useEffect(() => {
+    writeStoredNumber(IQ_STORAGE_KEY, iq);
+  }, [iq]);
+
+  useEffect(() => {
+    writeStoredJson(STAKES_STORAGE_KEY, stakes);
+  }, [stakes]);
+
+  useEffect(() => {
+    if (!stakes.length) return;
+    const now = nowMs;
+    let delta = 0;
+    let updated = false;
+
+    const nextStakes = stakes.map((stake) => {
+      if (stake.status !== "pending") return stake;
+      const endMs = Date.parse(stake.endTime || "");
+      if (!Number.isFinite(endMs) || endMs > now) return stake;
+
+      // Phase 1 demo: resolve outcomes randomly once the market ends.
+      const resolvedSide = Math.random() < 0.5 ? "YES" : "NO";
+      const win = resolvedSide === stake.side;
+      delta += win ? stake.stake : -stake.stake;
+      updated = true;
+
+      return {
+        ...stake,
+        status: "resolved",
+        resolvedSide,
+        resolvedAt: now,
+      };
+    });
+
+    if (updated) {
+      setStakes(nextStakes);
+      setIq((prev) => prev + delta);
+    }
+  }, [stakes, nowMs]);
+
+  const handleStakeInput = useCallback((marketId, value) => {
+    setStakeInputs((prev) => ({ ...prev, [marketId]: value }));
+  }, []);
+
+  const handleQuickStake = useCallback((marketId, value) => {
+    setStakeInputs((prev) => ({ ...prev, [marketId]: String(value) }));
+  }, []);
+
+  const handleStake = useCallback(
+    (market, side) => {
+      const rawValue = stakeInputs[market.id];
+      const amount = Math.floor(Number(rawValue));
+      if (!amount || amount <= 0) {
+        onToast?.("Enter a stake amount.");
+        return;
+      }
+      if (amount > availableIq) {
+        onToast?.("Not enough available IQ.");
+        return;
+      }
+
+      const stake = {
+        id: makeStakeId(market.id),
+        claimId: market.id,
+        question: market.question,
+        endTime: market.endTime,
+        side,
+        stake: amount,
+        timestamp: Date.now(),
+        status: "pending",
+      };
+
+      setStakes((prev) => [stake, ...prev]);
+      setStakeInputs((prev) => ({ ...prev, [market.id]: "" }));
+      onToast?.(`You staked ${amount} IQ on ${side} (offchain demo).`);
+    },
+    [availableIq, onToast, stakeInputs]
+  );
+
+  const sortedStakes = useMemo(
+    () => [...stakes].sort((a, b) => b.timestamp - a.timestamp),
+    [stakes]
+  );
+
+  return (
+    <div>
+      <Card>
+        <div className="arenaHeader">
+          <div>
+            <div className="arenaTitle">The Arena</div>
+            <div className="arenaSub">Stake IQ on live market beliefs.</div>
+          </div>
+          <div className="iqPanel">
+            <div className="iqValue">Your IQ: {iq}</div>
+            <div className="iqRank">Rank: {rank}</div>
+            <div className="iqLocked">
+              Locked: {lockedIq} IQ | Available: {availableIq}
+            </div>
+          </div>
+        </div>
+      </Card>
+
+      {marketsLoading && markets.length === 0 && (
+        <Card>
+          <p className="muted">Loading markets...</p>
+        </Card>
+      )}
+
+      {marketsError && (
+        <Card>
+          <p className="msg">{marketsError}</p>
+        </Card>
+      )}
+
+      {!marketsLoading && markets.length === 0 && !marketsError && (
+        <Card>
+          <p className="muted">No active markets found.</p>
+        </Card>
+      )}
+
+      <div className="arenaFeed">
+        {markets.map((market) => {
+          const endMs = Date.parse(market.endTime || "");
+          const isEnded = Number.isFinite(endMs) && endMs <= nowMs;
+          const stakeValue = stakeInputs[market.id] | "";
+          return (
+            <div className="arenaCard" key={market.id}>
+              <div className="arenaTop">
+                <div className="arenaQuestion">{market.question}</div>
+                <div className="arenaCountdown">
+                  {formatCountdown(market.endTime, nowMs)}
+                </div>
+              </div>
+              <div className="tiny muted" style={{ marginTop: 6 }}>
+                Market belief
+              </div>
+              <div className="beliefRow">
+                <div className="beliefPill" data-side="yes">
+                  <span>YES</span>
+                  <span>{market.marketYesPct}%</span>
+                </div>
+                <div className="beliefPill" data-side="no">
+                  <span>NO</span>
+                  <span>{market.marketNoPct}%</span>
+                </div>
+              </div>
+              <div className="tiny muted" style={{ marginBottom: 6 }}>
+                Stake your IQ
+              </div>
+              <div className="stakeRow">
+                <div className="stakePresets">
+                  {STAKE_PRESETS.map((value) => (
+                    <button
+                      key={value}
+                      className="stakePreset"
+                      data-active={Number(stakeValue) === value ? "1" : "0"}
+                      onClick={() => handleQuickStake(market.id, value)}
+                      type="button"
+                    >
+                      {value}
+                    </button>
+                  ))}
+                </div>
+                <input
+                  className="stakeInput"
+                  type="number"
+                  min="1"
+                  step="1"
+                  inputMode="numeric"
+                  placeholder="Custom"
+                  value={stakeValue}
+                  onChange={(event) =>
+                    handleStakeInput(market.id, event.target.value)
+                  }
+                />
+              </div>
+              <div className="stakeActions">
+                <button
+                  className="stakeAction"
+                  data-side="yes"
+                  onClick={() => handleStake(market, "YES")}
+                  disabled={isEnded || availableIq <= 0}
+                  type="button"
+                >
+                  YES
+                </button>
+                <button
+                  className="stakeAction"
+                  data-side="no"
+                  onClick={() => handleStake(market, "NO")}
+                  disabled={isEnded || availableIq <= 0}
+                  type="button"
+                >
+                  NO
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <Card>
+        <h3 className="cardTitle">My Stakes</h3>
+        {sortedStakes.length === 0 ? (
+          <p className="muted">No stakes yet.</p>
+        ) : (
+          <div className="stakesList">
+            {sortedStakes.map((stake) => {
+              const resolved = stake.status === "resolved";
+              const win = resolved && stake.resolvedSide === stake.side;
+              const statusLabel = resolved
+                ? win
+                  ? "Won"
+                  : "Lost"
+                : "Pending";
+              const outcomeLabel = resolved
+                ? `Resolved: ${stake.resolvedSide}`
+                : "Waiting on resolution.";
+
+              return (
+                <div className="stakeItem" key={stake.id}>
+                  <div className="stakeTitle">{stake.question}</div>
+                  <div className="stakeMeta">
+                    {stake.stake} IQ on {stake.side} | {statusLabel}
+                  </div>
+                  <div className="stakeMeta">{outcomeLabel}</div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+      <style>{arenaCss}</style>
+    </div>
+  );
+}
+
+function DiagnosticsScreen({ onRefresh }) {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const loadDiagnostics = useCallback(async (refresh = false) => {
+    setLoading(true);
+    setError("");
+    try {
+      const url = refresh
+        ? `${POLYMARKET_DIAGNOSTICS_PATH}?refresh=1`
+        : POLYMARKET_DIAGNOSTICS_PATH;
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Diagnostics request failed (${response.status})`);
+      }
+      const payload = await response.json();
+      setData(payload);
+      return true;
+    } catch (err) {
+      setError(err?.message || "Failed to load diagnostics.");
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadDiagnostics();
+  }, [loadDiagnostics]);
+
+  const handleRefresh = async () => {
+    const ok = await loadDiagnostics(true);
+    if (ok) onRefresh?.();
+  };
+
+  const lastFetchLabel = formatTimestamp(data?.lastFetchTime);
+  const cacheLabel =
+    data?.lastCacheHit === null || data?.lastCacheHit === undefined
+      ? "n/a"
+      : data.lastCacheHit
+        ? "hit"
+        : "miss";
+  const errorLabel = data?.lastError || "None";
+  const countLabel =
+    typeof data?.lastCount === "number" ? String(data.lastCount) : "0";
+
+  return (
+    <Card>
+      <h3 className="cardTitle">Diagnostics</h3>
+      <div className="diagGrid">
+        <div className="diagRow">
+          <span className="diagLabel">Last fetch</span>
+          <span className="diagValue">{lastFetchLabel}</span>
+        </div>
+        <div className="diagRow">
+          <span className="diagLabel">Markets</span>
+          <span className="diagValue">{countLabel}</span>
+        </div>
+        <div className="diagRow">
+          <span className="diagLabel">Cache</span>
+          <span className="diagValue">{cacheLabel}</span>
+        </div>
+        <div className="diagRow">
+          <span className="diagLabel">Last error</span>
+          <span className="diagValue">{errorLabel}</span>
+        </div>
+      </div>
+      <div className="diagActions">
+        <Button primary onClick={handleRefresh} disabled={loading}>
+          {loading ? "Refreshing..." : "Refresh"}
+        </Button>
+      </div>
+      {error && <p className="msg">{error}</p>}
+      <style>{diagnosticsCss}</style>
+    </Card>
+  );
+}
+
+function Toast({ message }) {
+  return (
+    <div className="toast" role="status">
+      {message}
+      <style>{toastCss}</style>
+    </div>
+  );
+}
 
 function FlowRings({ pct, values }) {
   const [anim, setAnim] = useState({ meta: 0, cast: 0, mon: 0 });
@@ -687,4 +1226,124 @@ function humanError(e) {
     e?.message ||
     String(e)
   );
+}
+
+// Simple path state avoids adding a routing dependency for this phase.
+function useClientPath() {
+  const [path, setPath] = useState(() =>
+    typeof window === "undefined" ? "/" : window.location.pathname || "/"
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handlePop = () => setPath(window.location.pathname || "/");
+    window.addEventListener("popstate", handlePop);
+    return () => window.removeEventListener("popstate", handlePop);
+  }, []);
+
+  const navigate = useCallback((nextPath) => {
+    if (typeof window === "undefined") return;
+    if (window.location.pathname === nextPath) return;
+    window.history.pushState({}, "", nextPath);
+    setPath(nextPath);
+  }, []);
+
+  return { path, navigate };
+}
+
+function useNow(intervalMs) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), intervalMs);
+    return () => clearInterval(id);
+  }, [intervalMs]);
+
+  return now;
+}
+
+function readSessionFlag(key) {
+  if (typeof window === "undefined") return false;
+  return window.sessionStorage.getItem(key) === "1";
+}
+
+function writeSessionFlag(key, value) {
+  if (typeof window === "undefined") return;
+  if (value) {
+    window.sessionStorage.setItem(key, "1");
+  } else {
+    window.sessionStorage.removeItem(key);
+  }
+}
+
+function readStoredNumber(key, fallback) {
+  if (typeof window === "undefined") return fallback;
+  const raw = window.localStorage.getItem(key);
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+/** @returns {ArenaStake[]} */
+function loadStoredStakes() {
+  if (typeof window === "undefined") return [];
+  const raw = window.localStorage.getItem(STAKES_STORAGE_KEY);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((stake) => ({
+      ...stake,
+      status:
+        stake.status === "resolved" || stake.resolvedSide
+          ? "resolved"
+          : "pending",
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function writeStoredNumber(key, value) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, String(value));
+}
+
+function writeStoredJson(key, value) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(key, JSON.stringify(value));
+}
+
+function formatCountdown(endTime, nowMs) {
+  const endMs = Date.parse(endTime || "");
+  if (!Number.isFinite(endMs)) return "End time TBD";
+  const delta = endMs - nowMs;
+  if (delta <= 0) return "Ended";
+  const totalSeconds = Math.floor(delta / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (days > 0) return `Ends in ${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `Ends in ${hours}h ${minutes}m ${seconds}s`;
+  return `Ends in ${minutes}m ${seconds}s`;
+}
+
+function formatTimestamp(value) {
+  if (!value) return "Never";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return date.toLocaleString();
+}
+
+function getRank(iq) {
+  if (iq >= 160) return "Galaxy Brain";
+  if (iq >= 120) return "Big Brain";
+  return "Average Human";
+}
+
+function makeStakeId(claimId) {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) {
+    return crypto.randomUUID();
+  }
+  return `${claimId}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
