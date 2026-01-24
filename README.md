@@ -1,5 +1,6 @@
 # ⚖️ TriBalance — The Three Forces of Web3
 
+
 **TriBalance** explores the balance between the three emerging forces of Web3 — **MetaMask**, **Farcaster**, and **Monad**.  
 Users create a **MetaMask Smart Account** directly inside **Farcaster**, mint an **ERC-1155 Proof NFT** representing their chosen side, and cast on-chain votes — fully **gasless**, powered by **Pimlico Account Abstraction**.
 
