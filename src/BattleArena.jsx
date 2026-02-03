@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const CHARACTER_POOL = [
   {
@@ -116,8 +116,15 @@ const OPPONENT_RING = "#ff4b6b";
 const PLAYER_MAX_SPEED = 2.6;
 const OPPONENT_MAX_SPEED = 2.2;
 const CONTROL_SPEED = 3.0;
+const COIN_HOLD_DURATION = 6000;
+const COIN_RESPAWN_DELAY = 2000;
+const INTRO_DURATION = 1400;
 
-export default function BattleArenaScreen() {
+export default function BattleArenaScreen({ onEnterMatch }) {
+  const [entryStatus, setEntryStatus] = useState({
+    loading: false,
+    message: "",
+  });
   const [phase, setPhase] = useState("select");
   const [player, setPlayer] = useState(null);
   const [opponent, setOpponent] = useState(null);
@@ -138,6 +145,7 @@ export default function BattleArenaScreen() {
   const opponentRef = useRef(null);
   const coinRef = useRef(null);
   const runningRef = useRef(false);
+  const introTimerRef = useRef(null);
   const controlRef = useRef({
     active: false,
     targetX: 0,
@@ -154,10 +162,19 @@ export default function BattleArenaScreen() {
     type: COINS[0],
     position: { x: 0, y: 0 },
     respawnAt: 0,
+    ownerExpiresAt: 0,
   });
   const playerLivesRef = useRef(MAX_LIVES);
   const opponentLivesRef = useRef(MAX_LIVES);
   const hitCooldownRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      if (introTimerRef.current) {
+        clearTimeout(introTimerRef.current);
+      }
+    };
+  }, []);
 
   const updateCoinState = useCallback((next) => {
     coinStateRef.current = { ...coinStateRef.current, ...next };
@@ -174,7 +191,7 @@ export default function BattleArenaScreen() {
     setOpponentLives(value);
   }, []);
 
-  const startMatch = useCallback(
+  const prepareMatch = useCallback(
     (selected) => {
       const chosen = selected ?? player;
       if (!chosen) return;
@@ -184,21 +201,70 @@ export default function BattleArenaScreen() {
       setPlayerLivesSafe(MAX_LIVES);
       setOpponentLivesSafe(MAX_LIVES);
       setWinner(null);
+      setEntryStatus({ loading: false, message: "" });
       updateCoinState({ owner: null, active: false });
       coinStateRef.current.respawnAt = 0;
+      coinStateRef.current.ownerExpiresAt = 0;
       hitCooldownRef.current = 0;
-      setPhase("playing");
-      setRoundId((prev) => prev + 1);
+      setPhase("intro");
     },
-    [player, setOpponentLivesSafe, setPlayerLivesSafe, updateCoinState]
+    [player, setEntryStatus, setOpponentLivesSafe, setPlayerLivesSafe, updateCoinState]
   );
+
+  const beginFight = useCallback(() => {
+    setPhase("playing");
+    setRoundId((prev) => prev + 1);
+  }, []);
 
   const resetToSelect = useCallback(() => {
     runningRef.current = false;
     setWinner(null);
+    setEntryStatus({ loading: false, message: "" });
     setPhase("select");
     updateCoinState({ owner: null, active: false });
-  }, [updateCoinState]);
+    coinStateRef.current.ownerExpiresAt = 0;
+    if (introTimerRef.current) {
+      clearTimeout(introTimerRef.current);
+    }
+  }, [setEntryStatus, updateCoinState]);
+
+  const handleSelectCharacter = useCallback(
+    async (character) => {
+      if (!character || entryStatus.loading) return;
+
+      if (!onEnterMatch) {
+        prepareMatch(character);
+        if (introTimerRef.current) clearTimeout(introTimerRef.current);
+        introTimerRef.current = setTimeout(beginFight, INTRO_DURATION);
+        return;
+      }
+
+      setEntryStatus({ loading: true, message: "" });
+
+      try {
+        const result = await onEnterMatch(character);
+        if (!result?.ok) {
+          setEntryStatus({
+            loading: false,
+            message: result?.message || "Entry failed. Try again.",
+          });
+          return;
+        }
+      } catch (error) {
+        setEntryStatus({
+          loading: false,
+          message: "Entry failed. Try again.",
+        });
+        return;
+      }
+
+      setEntryStatus({ loading: false, message: "" });
+      prepareMatch(character);
+      if (introTimerRef.current) clearTimeout(introTimerRef.current);
+      introTimerRef.current = setTimeout(beginFight, INTRO_DURATION);
+    },
+    [beginFight, entryStatus.loading, onEnterMatch, prepareMatch, setEntryStatus]
+  );
 
   const spawnCoin = useCallback(() => {
     if (!fieldSize.width || !fieldSize.height) return;
@@ -310,7 +376,24 @@ export default function BattleArenaScreen() {
       }
 
       const activeCoin = coinStateRef.current;
-      if (activeCoin.active && !activeCoin.owner) {
+      if (activeCoin.owner && coinStateRef.current.ownerExpiresAt) {
+        if (now >= coinStateRef.current.ownerExpiresAt) {
+          updateCoinState({ owner: null, active: false });
+          coinStateRef.current.ownerExpiresAt = 0;
+          coinStateRef.current.respawnAt = now + COIN_RESPAWN_DELAY;
+          return;
+        }
+      }
+
+      if (activeCoin.owner === "opponent") {
+        const dx = playerState.x - opponentState.x;
+        const dy = playerState.y - opponentState.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const targetVx = (dx / dist) * OPPONENT_MAX_SPEED;
+        const targetVy = (dy / dist) * OPPONENT_MAX_SPEED;
+        opponentState.vx = lerp(opponentState.vx, targetVx, 0.18);
+        opponentState.vy = lerp(opponentState.vy, targetVy, 0.18);
+      } else if (activeCoin.active && !activeCoin.owner) {
         const dx = activeCoin.position.x - opponentState.x;
         const dy = activeCoin.position.y - opponentState.y;
         const dist = Math.hypot(dx, dy) || 1;
@@ -361,10 +444,12 @@ export default function BattleArenaScreen() {
         );
         if (playerDistance <= BALL_RADIUS + COIN_RADIUS) {
           updateCoinState({ owner: "player", active: false });
+          coinStateRef.current.ownerExpiresAt = now + COIN_HOLD_DURATION;
           return;
         }
         if (opponentDistance <= BALL_RADIUS + COIN_RADIUS) {
           updateCoinState({ owner: "opponent", active: false });
+          coinStateRef.current.ownerExpiresAt = now + COIN_HOLD_DURATION;
           return;
         }
       }
@@ -415,7 +500,8 @@ export default function BattleArenaScreen() {
       }
 
       updateCoinState({ owner: null, active: false });
-      coinStateRef.current.respawnAt = now + 2000;
+      coinStateRef.current.ownerExpiresAt = 0;
+      coinStateRef.current.respawnAt = now + COIN_RESPAWN_DELAY;
     },
     [setOpponentLivesSafe, setPlayerLivesSafe, updateCoinState]
   );
@@ -472,7 +558,7 @@ export default function BattleArenaScreen() {
   return (
     <div className="battleScreen">
       {phase === "select" && (
-        <div className="battleSelect">
+        <div className="battleSelect" data-loading={entryStatus.loading ? "1" : "0"}>
           <div className="battleSelectHeader">
             <div>
               <div className="battleTitle">Choose Your Fighter</div>
@@ -481,13 +567,19 @@ export default function BattleArenaScreen() {
               </div>
             </div>
           </div>
+          {(entryStatus.loading || entryStatus.message) && (
+            <div className="battleEntryStatus">
+              {entryStatus.loading ? "Awaiting signature..." : entryStatus.message}
+            </div>
+          )}
           <div className="battleGrid">
             {CHARACTER_POOL.map((character) => (
               <button
                 key={character.id}
                 type="button"
                 className="battleCard"
-                onClick={() => startMatch(character)}
+                onClick={() => handleSelectCharacter(character)}
+                disabled={entryStatus.loading}
               >
                 <div
                   className="battleAvatar"
@@ -508,11 +600,34 @@ export default function BattleArenaScreen() {
         </div>
       )}
 
-      {phase !== "select" && player && opponent && (
+      {phase === "intro" && player && opponent && (
+        <div className="battleIntro">
+          <div className="battleIntroCard">
+            <div className="battleIntroSide" data-side="left">
+              <div
+                className="battleIntroAvatar"
+                style={{ "--avatar-bg": getAvatarBackground(player) }}
+              />
+              <div className="battleIntroName">{player.name}</div>
+            </div>
+            <div className="battleIntroVs">VS</div>
+            <div className="battleIntroSide" data-side="right">
+              <div
+                className="battleIntroAvatar"
+                style={{ "--avatar-bg": getAvatarBackground(opponent) }}
+              />
+              <div className="battleIntroName">{opponent.name}</div>
+            </div>
+          </div>
+          <div className="battleIntroText">Fight!</div>
+        </div>
+      )}
+
+      {phase !== "select" && phase !== "intro" && player && opponent && (
         <div className="battleArena">
           <div className="battleHud">
             <div className="battleHudSide">
-              <div className="battleHudLabel">You · {player.name}</div>
+              <div className="battleHudLabel">You - {player.name}</div>
               <div className="battleHearts" data-team="player">
                 {Array.from({ length: MAX_LIVES }).map((_, index) => (
                   <span
@@ -656,7 +771,7 @@ export default function BattleArenaScreen() {
                     <button
                       type="button"
                       className="battleBtn primary"
-                      onClick={() => startMatch(player)}
+                      onClick={() => handleSelectCharacter(player)}
                     >
                       Play Again
                     </button>
@@ -704,6 +819,106 @@ const battleArenaCss = `
   margin-bottom: 6px;
 }
 
+.battleSelect[data-loading="1"] {
+  opacity: 0.7;
+}
+
+.battleEntryStatus {
+  font-size: 11px;
+  color: #ffd27a;
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+.battleIntro {
+  background: rgba(10, 12, 18, 0.85);
+  border: 1px solid #2a2e36;
+  border-radius: 18px;
+  padding: 18px 16px;
+  display: grid;
+  gap: 14px;
+  place-items: center;
+  text-align: center;
+  box-shadow: 0 20px 40px rgba(4, 6, 12, 0.6);
+}
+
+.battleIntroCard {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.battleIntroSide {
+  display: grid;
+  gap: 8px;
+  justify-items: center;
+}
+
+.battleIntroAvatar {
+  width: 92px;
+  height: 92px;
+  border-radius: 50%;
+  background-image: var(--avatar-bg);
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 0 0 4px rgba(75, 107, 255, 0.4);
+  animation: introLeft 1.1s ease both;
+}
+
+.battleIntroSide[data-side="right"] .battleIntroAvatar {
+  box-shadow: 0 0 0 4px rgba(255, 75, 107, 0.4);
+  animation: introRight 1.1s ease both;
+}
+
+.battleIntroName {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.battleIntroVs {
+  font-size: 20px;
+  font-weight: 800;
+  opacity: 0.7;
+}
+
+.battleIntroText {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: #ffd27a;
+}
+
+@keyframes introLeft {
+  0% {
+    transform: translateX(-40px) scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: translateX(6px) scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes introRight {
+  0% {
+    transform: translateX(40px) scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: translateX(-6px) scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(0) scale(1);
+  }
+}
+
 .battleTitle {
   font-size: 20px;
   font-weight: 800;
@@ -740,6 +955,12 @@ const battleArenaCss = `
   transform: translateY(-1px);
   border-color: #4b6bff;
   background: rgba(20, 24, 32, 0.95);
+}
+
+.battleCard:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
 }
 
 .battleAvatar {
@@ -1145,5 +1366,6 @@ function hashString(value) {
   }
   return hash;
 }
+
 
 
