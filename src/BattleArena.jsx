@@ -1,0 +1,1142 @@
+﻿import { useCallback, useEffect, useRef, useState } from "react";
+
+const CHARACTER_POOL = [
+  {
+    id: "trump",
+    name: "Donald Trump",
+    description: "45th & 47th President",
+    image: "/battle/characters/trump.png",
+  },
+  {
+    id: "cz",
+    name: "CZ (Changpeng Zhao)",
+    description: "Former Binance CEO",
+    image: "/battle/characters/cz.png",
+  },
+  {
+    id: "elon-musk",
+    name: "Elon Musk",
+    description: "Tesla & SpaceX CEO",
+    image: "/battle/characters/elon-mask.png",
+  },
+  {
+    id: "satoshi",
+    name: "Satoshi Nakamoto",
+    description: "Bitcoin Creator",
+    image: "/battle/characters/satoshi.png",
+  },
+  {
+    id: "vitalik",
+    name: "Vitalik Buterin",
+    description: "Ethereum Co-Founder",
+    image: "/battle/characters/vitalik.png",
+  },
+  {
+    id: "sbf",
+    name: "Sam Bankman-Fried",
+    description: "FTX Founder",
+    image: "/battle/characters/sbf.png",
+  },
+  {
+    id: "michael-saylor",
+    name: "Michael Saylor",
+    description: "MicroStrategy CEO",
+    image: "/battle/characters/michael-saylor.png",
+  },
+  {
+    id: "gary-gensler",
+    name: "Gary Gensler",
+    description: "Former SEC Chair",
+    image: "/battle/characters/gary-gensler.png",
+  },
+  {
+    id: "jerome-powell",
+    name: "Jerome Powell",
+    description: "Federal Reserve Chair",
+    image: "/battle/characters/jerome-powell.png",
+  },
+  {
+    id: "kanye-west",
+    name: "Kanye West (Ye)",
+    description: "Crypto Enthusiast",
+    image: "/battle/characters/kanye-west.png",
+  },
+];
+
+const COINS = [
+  {
+    id: "btc",
+    name: "Bitcoin",
+    label: "BTC",
+    color: "#f7931a",
+    icon: "/battle/coins/btc.svg",
+    symbol: "BTC",
+  },
+  {
+    id: "eth",
+    name: "Ethereum",
+    label: "ETH",
+    color: "#627eea",
+    icon: "/battle/coins/eth.svg",
+    symbol: "ETH",
+  },
+  {
+    id: "sol",
+    name: "Solana",
+    label: "SOL",
+    color: "#14f195",
+    icon: "/battle/coins/sol.svg",
+    symbol: "SOL",
+  },
+  {
+    id: "doge",
+    name: "Dogecoin",
+    label: "DOGE",
+    color: "#c2a633",
+    icon: "/battle/coins/doge.svg",
+    symbol: "DOGE",
+  },
+  {
+    id: "base",
+    name: "Base",
+    label: "BASE",
+    color: "#0052ff",
+    icon: "/battle/coins/base.svg",
+    symbol: "BASE",
+  },
+];
+
+const MAX_LIVES = 5;
+const BALL_SIZE = 58;
+const BALL_RADIUS = BALL_SIZE / 2;
+const COIN_SIZE = 34;
+const COIN_RADIUS = COIN_SIZE / 2;
+const PLAYER_RING = "#4b6bff";
+const OPPONENT_RING = "#ff4b6b";
+const PLAYER_MAX_SPEED = 2.6;
+const OPPONENT_MAX_SPEED = 2.2;
+const CONTROL_SPEED = 3.0;
+
+export default function BattleArenaScreen() {
+  const [phase, setPhase] = useState("select");
+  const [player, setPlayer] = useState(null);
+  const [opponent, setOpponent] = useState(null);
+  const [playerLives, setPlayerLives] = useState(MAX_LIVES);
+  const [opponentLives, setOpponentLives] = useState(MAX_LIVES);
+  const [winner, setWinner] = useState(null);
+  const [roundId, setRoundId] = useState(0);
+  const [fieldSize, setFieldSize] = useState({ width: 0, height: 0 });
+  const [coinState, setCoinState] = useState({
+    owner: null,
+    active: false,
+    type: COINS[0],
+    position: { x: 0, y: 0 },
+  });
+
+  const fieldRef = useRef(null);
+  const playerRef = useRef(null);
+  const opponentRef = useRef(null);
+  const coinRef = useRef(null);
+  const runningRef = useRef(false);
+  const controlRef = useRef({
+    active: false,
+    targetX: 0,
+    targetY: 0,
+    pointerId: null,
+  });
+  const positionsRef = useRef({
+    player: { x: 0, y: 0, vx: 0, vy: 0 },
+    opponent: { x: 0, y: 0, vx: 0, vy: 0 },
+  });
+  const coinStateRef = useRef({
+    owner: null,
+    active: false,
+    type: COINS[0],
+    position: { x: 0, y: 0 },
+    respawnAt: 0,
+  });
+  const playerLivesRef = useRef(MAX_LIVES);
+  const opponentLivesRef = useRef(MAX_LIVES);
+  const hitCooldownRef = useRef(0);
+
+  const updateCoinState = useCallback((next) => {
+    coinStateRef.current = { ...coinStateRef.current, ...next };
+    setCoinState((prev) => ({ ...prev, ...next }));
+  }, []);
+
+  const setPlayerLivesSafe = useCallback((value) => {
+    playerLivesRef.current = value;
+    setPlayerLives(value);
+  }, []);
+
+  const setOpponentLivesSafe = useCallback((value) => {
+    opponentLivesRef.current = value;
+    setOpponentLives(value);
+  }, []);
+
+  const startMatch = useCallback(
+    (selected) => {
+      const chosen = selected ?? player;
+      if (!chosen) return;
+      const nextOpponent = pickOpponent(chosen.id);
+      setPlayer(chosen);
+      setOpponent(nextOpponent);
+      setPlayerLivesSafe(MAX_LIVES);
+      setOpponentLivesSafe(MAX_LIVES);
+      setWinner(null);
+      updateCoinState({ owner: null, active: false });
+      coinStateRef.current.respawnAt = 0;
+      hitCooldownRef.current = 0;
+      setPhase("playing");
+      setRoundId((prev) => prev + 1);
+    },
+    [player, setOpponentLivesSafe, setPlayerLivesSafe, updateCoinState]
+  );
+
+  const resetToSelect = useCallback(() => {
+    runningRef.current = false;
+    setWinner(null);
+    setPhase("select");
+    updateCoinState({ owner: null, active: false });
+  }, [updateCoinState]);
+
+  const spawnCoin = useCallback(() => {
+    if (!fieldSize.width || !fieldSize.height) return;
+    const type = randomFrom(COINS);
+    const centerX = fieldSize.width / 2 + randBetween(-40, 40);
+    const centerY = fieldSize.height / 2 + randBetween(-40, 40);
+    const position = {
+      x: clamp(centerX, COIN_RADIUS, fieldSize.width - COIN_RADIUS),
+      y: clamp(centerY, COIN_RADIUS, fieldSize.height - COIN_RADIUS),
+    };
+    updateCoinState({
+      owner: null,
+      active: true,
+      type,
+      position,
+    });
+  }, [fieldSize.height, fieldSize.width, updateCoinState]);
+
+  useEffect(() => {
+    const fieldEl = fieldRef.current;
+    if (!fieldEl) return;
+
+    const update = () => {
+      const rect = fieldEl.getBoundingClientRect();
+      setFieldSize({ width: rect.width, height: rect.height });
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(fieldEl);
+    return () => observer.disconnect();
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "playing" || !fieldSize.width || !fieldSize.height) return;
+    if (!player || !opponent) return;
+
+    runningRef.current = true;
+
+    const bounds = { width: fieldSize.width, height: fieldSize.height };
+    const playerStart = {
+      x: bounds.width * 0.25,
+      y: bounds.height * 0.6,
+    };
+    const opponentStart = {
+      x: bounds.width * 0.75,
+      y: bounds.height * 0.4,
+    };
+
+    const playerVelocity = randomVelocity(PLAYER_MAX_SPEED * 0.6);
+    const opponentVelocity = randomVelocity(OPPONENT_MAX_SPEED * 0.6);
+
+    positionsRef.current.player = {
+      ...playerStart,
+      ...playerVelocity,
+    };
+    positionsRef.current.opponent = {
+      ...opponentStart,
+      ...opponentVelocity,
+    };
+
+    applyPosition(playerRef.current, playerStart.x, playerStart.y, BALL_RADIUS);
+    applyPosition(
+      opponentRef.current,
+      opponentStart.x,
+      opponentStart.y,
+      BALL_RADIUS
+    );
+
+    spawnCoin();
+
+    let rafId = 0;
+    let lastTime = performance.now();
+
+    const loop = (now) => {
+      if (!runningRef.current) return;
+      const delta = Math.min(2.5, (now - lastTime) / 16.67);
+      lastTime = now;
+
+      tick(delta, now, bounds);
+      rafId = requestAnimationFrame(loop);
+    };
+
+    rafId = requestAnimationFrame(loop);
+
+    return () => {
+      runningRef.current = false;
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [fieldSize.height, fieldSize.width, opponent, phase, player, roundId, spawnCoin]);
+
+  const tick = useCallback(
+    (delta, now, bounds) => {
+      const playerState = positionsRef.current.player;
+      const opponentState = positionsRef.current.opponent;
+
+      if (controlRef.current.active) {
+        const { targetX, targetY } = controlRef.current;
+        const dx = targetX - playerState.x;
+        const dy = targetY - playerState.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const targetVx = (dx / dist) * CONTROL_SPEED;
+        const targetVy = (dy / dist) * CONTROL_SPEED;
+        playerState.vx = lerp(playerState.vx, targetVx, 0.18);
+        playerState.vy = lerp(playerState.vy, targetVy, 0.18);
+      } else if (Math.random() < 0.05) {
+        playerState.vx += (Math.random() - 0.5) * 0.35;
+        playerState.vy += (Math.random() - 0.5) * 0.35;
+      }
+
+      if (Math.random() < 0.08) {
+        opponentState.vx += (Math.random() - 0.5) * 0.4;
+        opponentState.vy += (Math.random() - 0.5) * 0.4;
+      }
+
+      const activeCoin = coinStateRef.current;
+      if (activeCoin.active && !activeCoin.owner) {
+        const dx = activeCoin.position.x - opponentState.x;
+        const dy = activeCoin.position.y - opponentState.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        opponentState.vx += (dx / dist) * 0.05;
+        opponentState.vy += (dy / dist) * 0.05;
+      }
+
+      clampSpeed(playerState, PLAYER_MAX_SPEED);
+      clampSpeed(opponentState, OPPONENT_MAX_SPEED);
+
+      moveEntity(playerState, bounds, BALL_RADIUS, delta);
+      moveEntity(opponentState, bounds, BALL_RADIUS, delta);
+
+      applyPosition(playerRef.current, playerState.x, playerState.y, BALL_RADIUS);
+      applyPosition(
+        opponentRef.current,
+        opponentState.x,
+        opponentState.y,
+        BALL_RADIUS
+      );
+
+      if (activeCoin.active && coinRef.current) {
+        applyPosition(
+          coinRef.current,
+          activeCoin.position.x,
+          activeCoin.position.y,
+          COIN_RADIUS
+        );
+      }
+
+      if (activeCoin.active && !activeCoin.owner) {
+        const playerDistance = distance(
+          playerState.x,
+          playerState.y,
+          activeCoin.position.x,
+          activeCoin.position.y
+        );
+        const opponentDistance = distance(
+          opponentState.x,
+          opponentState.y,
+          activeCoin.position.x,
+          activeCoin.position.y
+        );
+        if (playerDistance <= BALL_RADIUS + COIN_RADIUS) {
+          updateCoinState({ owner: "player", active: false });
+          return;
+        }
+        if (opponentDistance <= BALL_RADIUS + COIN_RADIUS) {
+          updateCoinState({ owner: "opponent", active: false });
+          return;
+        }
+      }
+
+      if (activeCoin.owner) {
+        const ballDistance = distance(
+          playerState.x,
+          playerState.y,
+          opponentState.x,
+          opponentState.y
+        );
+        if (ballDistance <= BALL_RADIUS * 2) {
+          if (now - hitCooldownRef.current > 800) {
+            hitCooldownRef.current = now;
+            handleHit(activeCoin.owner, now);
+          }
+        }
+      }
+
+      if (!activeCoin.active && !activeCoin.owner && activeCoin.respawnAt) {
+        if (now >= activeCoin.respawnAt) {
+          activeCoin.respawnAt = 0;
+          spawnCoin();
+        }
+      }
+    },
+    [spawnCoin, updateCoinState]
+  );
+
+  const handleHit = useCallback(
+    (owner, now) => {
+      if (owner === "player") {
+        const nextLives = Math.max(0, opponentLivesRef.current - 1);
+        setOpponentLivesSafe(nextLives);
+        if (nextLives === 0) {
+          setWinner("player");
+          setPhase("ended");
+          runningRef.current = false;
+        }
+      } else {
+        const nextLives = Math.max(0, playerLivesRef.current - 1);
+        setPlayerLivesSafe(nextLives);
+        if (nextLives === 0) {
+          setWinner("opponent");
+          setPhase("ended");
+          runningRef.current = false;
+        }
+      }
+
+      updateCoinState({ owner: null, active: false });
+      coinStateRef.current.respawnAt = now + 2000;
+    },
+    [setOpponentLivesSafe, setPlayerLivesSafe, updateCoinState]
+  );
+
+  const handlePointerDown = useCallback(
+    (event) => {
+      if (phase !== "playing") return;
+      if (!fieldRef.current) return;
+      event.preventDefault();
+      const rect = fieldRef.current.getBoundingClientRect();
+      const x = clamp(event.clientX - rect.left, BALL_RADIUS, rect.width - BALL_RADIUS);
+      const y = clamp(event.clientY - rect.top, BALL_RADIUS, rect.height - BALL_RADIUS);
+
+      controlRef.current.active = true;
+      controlRef.current.targetX = x;
+      controlRef.current.targetY = y;
+      controlRef.current.pointerId = event.pointerId;
+
+      const playerState = positionsRef.current.player;
+      const dx = x - playerState.x;
+      const dy = y - playerState.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      playerState.vx = (dx / dist) * CONTROL_SPEED;
+      playerState.vy = (dy / dist) * CONTROL_SPEED;
+
+      fieldRef.current.setPointerCapture(event.pointerId);
+    },
+    [phase]
+  );
+
+  const handlePointerMove = useCallback((event) => {
+    if (!controlRef.current.active) return;
+    if (controlRef.current.pointerId !== event.pointerId) return;
+    if (!fieldRef.current) return;
+    event.preventDefault();
+    const rect = fieldRef.current.getBoundingClientRect();
+    const x = clamp(event.clientX - rect.left, BALL_RADIUS, rect.width - BALL_RADIUS);
+    const y = clamp(event.clientY - rect.top, BALL_RADIUS, rect.height - BALL_RADIUS);
+    controlRef.current.targetX = x;
+    controlRef.current.targetY = y;
+  }, []);
+
+  const handlePointerUp = useCallback((event) => {
+    if (controlRef.current.pointerId !== event.pointerId) return;
+    controlRef.current.active = false;
+    controlRef.current.pointerId = null;
+    if (fieldRef.current?.hasPointerCapture(event.pointerId)) {
+      fieldRef.current.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const activeCoinLabel = coinState.owner ? `Holding ${coinState.type.label}` : "";
+
+  return (
+    <div className="battleScreen">
+      {phase === "select" && (
+        <div className="battleSelect">
+          <div className="battleSelectHeader">
+            <div>
+              <div className="battleTitle">Choose Your Fighter</div>
+              <div className="battleSubtitle">
+                Tap a character to enter the battle arena.
+              </div>
+            </div>
+          </div>
+          <div className="battleGrid">
+            {CHARACTER_POOL.map((character) => (
+              <button
+                key={character.id}
+                type="button"
+                className="battleCard"
+                onClick={() => startMatch(character)}
+              >
+                <div
+                  className="battleAvatar"
+                  data-has-image={character.image ? "1" : "0"}
+                  style={{ "--avatar-bg": getAvatarBackground(character) }}
+                >
+                  <span className="battleInitials">
+                    {getInitials(character.name)}
+                  </span>
+                </div>
+                <div>
+                  <div className="battleName">{character.name}</div>
+                  <div className="battleDesc">{character.description}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {phase !== "select" && player && opponent && (
+        <div className="battleArena">
+          <div className="battleHud">
+            <div className="battleHudSide">
+              <div className="battleHudLabel">You · {player.name}</div>
+              <div className="battleHearts" data-team="player">
+                {Array.from({ length: MAX_LIVES }).map((_, index) => (
+                  <span
+                    key={`p-heart-${index}`}
+                    className="battleHeart"
+                    data-dead={index >= playerLives ? "1" : "0"}
+                  >
+                    ?
+                  </span>
+                ))}
+              </div>
+            </div>
+            <div className="battleHudVs">VS</div>
+            <div className="battleHudSide" data-align="right">
+              <div className="battleHudLabel">{opponent.name}</div>
+              <div className="battleHearts" data-team="opponent">
+                {Array.from({ length: MAX_LIVES }).map((_, index) => (
+                  <span
+                    key={`o-heart-${index}`}
+                    className="battleHeart"
+                    data-dead={index >= opponentLives ? "1" : "0"}
+                  >
+                    ?
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div
+            className="battleField"
+            ref={fieldRef}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerLeave={handlePointerUp}
+            onPointerCancel={handlePointerUp}
+          >
+            <div
+              className="battleBall"
+              ref={playerRef}
+              data-team="player"
+              style={{ "--ring-color": PLAYER_RING }}
+              aria-label="Player"
+            >
+              <div
+                className="battleAvatarInner"
+                data-has-image={player.image ? "1" : "0"}
+                style={{ "--avatar-bg": getAvatarBackground(player) }}
+              >
+                <span className="battleInitials">
+                  {getInitials(player.name)}
+                </span>
+              </div>
+              {coinState.owner === "player" && (
+                <div className="battleCarry" data-coin={coinState.type.id}>
+                  {coinState.type.icon ? (
+                    <img
+                      className="battleCarryIcon"
+                      src={coinState.type.icon}
+                      alt={coinState.type.label}
+                    />
+                  ) : (
+                    <span className="battleCarrySymbol">
+                      {coinState.type.symbol}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div
+              className="battleBall"
+              ref={opponentRef}
+              data-team="opponent"
+              style={{ "--ring-color": OPPONENT_RING }}
+              aria-label="Opponent"
+            >
+              <div
+                className="battleAvatarInner"
+                data-has-image={opponent.image ? "1" : "0"}
+                style={{ "--avatar-bg": getAvatarBackground(opponent) }}
+              >
+                <span className="battleInitials">
+                  {getInitials(opponent.name)}
+                </span>
+              </div>
+              {coinState.owner === "opponent" && (
+                <div className="battleCarry" data-coin={coinState.type.id}>
+                  {coinState.type.icon ? (
+                    <img
+                      className="battleCarryIcon"
+                      src={coinState.type.icon}
+                      alt={coinState.type.label}
+                    />
+                  ) : (
+                    <span className="battleCarrySymbol">
+                      {coinState.type.symbol}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {coinState.active && (
+              <div
+                className="battleCoin"
+                ref={coinRef}
+                style={{ "--coin-color": coinState.type.color }}
+                aria-label={`${coinState.type.name} coin`}
+              >
+                <div className="battleCoinSymbol">
+                  {coinState.type.icon ? (
+                    <img
+                      className="battleCoinIcon"
+                      src={coinState.type.icon}
+                      alt={coinState.type.label}
+                    />
+                  ) : (
+                    <span>{coinState.type.symbol}</span>
+                  )}
+                </div>
+                <div className="battleCoinLabel">{coinState.type.label}</div>
+              </div>
+            )}
+
+            {phase === "ended" && (
+              <div className="battleOverlay">
+                <div className="battleResultCard">
+                  <div className="battleResultTitle">
+                    {winner === "player" ? "You Win!" : "You Lose"}
+                  </div>
+                  <div className="battleResultSubtitle">
+                    {winner === "player"
+                      ? "Arena dominance secured."
+                      : "Your opponent claimed the coin."}
+                  </div>
+                  <div className="battleResultActions">
+                    <button
+                      type="button"
+                      className="battleBtn primary"
+                      onClick={() => startMatch(player)}
+                    >
+                      Play Again
+                    </button>
+                    <button
+                      type="button"
+                      className="battleBtn"
+                      onClick={resetToSelect}
+                    >
+                      Change Fighter
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="battleHint">
+            {phase === "playing"
+              ? "Drag or tap to steer your fighter. Grab the coin and collide!"
+              : ""}
+          </div>
+          {activeCoinLabel && (
+            <div className="battleCoinStatus">{activeCoinLabel}</div>
+          )}
+        </div>
+      )}
+
+      <style>{battleArenaCss}</style>
+    </div>
+  );
+}
+
+const battleArenaCss = `
+.battleScreen {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.battleSelectHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.battleTitle {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+.battleSubtitle {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-top: 4px;
+}
+
+.battleGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.battleCard {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  background: rgba(16, 18, 24, 0.9);
+  border: 1px solid #2a2e36;
+  border-radius: 14px;
+  padding: 10px;
+  color: #eaeef7;
+  cursor: pointer;
+  transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+}
+
+.battleCard:hover {
+  transform: translateY(-1px);
+  border-color: #4b6bff;
+  background: rgba(20, 24, 32, 0.95);
+}
+
+.battleAvatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background-image: var(--avatar-bg);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08);
+  flex: 0 0 auto;
+}
+
+.battleAvatarInner {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background-image: var(--avatar-bg);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.08);
+}
+
+.battleInitials {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+}
+
+.battleAvatar[data-has-image="1"] .battleInitials,
+.battleAvatarInner[data-has-image="1"] .battleInitials {
+  opacity: 0;
+}
+
+.battleName {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.battleDesc {
+  font-size: 10px;
+  opacity: 0.65;
+  margin-top: 2px;
+}
+
+.battleArena {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.battleHud {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 8px;
+}
+
+.battleHudSide {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.battleHudSide[data-align="right"] {
+  align-items: flex-end;
+  text-align: right;
+}
+
+.battleHudLabel {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.battleHudVs {
+  font-size: 12px;
+  font-weight: 800;
+  opacity: 0.65;
+  text-transform: uppercase;
+}
+
+.battleHearts {
+  display: flex;
+  gap: 4px;
+}
+
+.battleHeart {
+  font-size: 14px;
+  transition: opacity 0.2s ease;
+}
+
+.battleHearts[data-team="player"] .battleHeart {
+  color: #4b6bff;
+}
+
+.battleHearts[data-team="opponent"] .battleHeart {
+  color: #ff4b6b;
+}
+
+.battleHeart[data-dead="1"] {
+  opacity: 0.25;
+  filter: grayscale(1);
+}
+
+.battleField {
+  position: relative;
+  width: 100%;
+  min-height: 360px;
+  aspect-ratio: 3 / 4;
+  background: #0a0a0a;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  touch-action: none;
+}
+
+.battleBall {
+  position: absolute;
+  width: ${BALL_SIZE}px;
+  height: ${BALL_SIZE}px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #1b1f27, #0b0d12 70%);
+  border: 2px solid #0c0f15;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 3px var(--ring-color), 0 0 18px color-mix(in srgb, var(--ring-color), transparent 60%);
+  will-change: transform;
+}
+
+.battleCoin {
+  position: absolute;
+  width: ${COIN_SIZE}px;
+  height: ${COIN_SIZE}px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #fff2c7, var(--coin-color));
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  text-align: center;
+  color: #1b1200;
+  font-weight: 700;
+  box-shadow: 0 0 14px color-mix(in srgb, var(--coin-color), transparent 60%);
+  animation: coinSpin 6s linear infinite;
+  will-change: transform;
+}
+
+.battleCoinSymbol {
+  font-size: 14px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+
+.battleCoinLabel {
+  font-size: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.battleCarry {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(15, 15, 15, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 10px rgba(255, 255, 255, 0.15);
+}
+
+.battleCarrySymbol {
+  font-size: 12px;
+}
+
+.battleCoinIcon {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.battleCarryIcon {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
+.battleOverlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(5, 6, 10, 0.7);
+  display: grid;
+  place-items: center;
+  backdrop-filter: blur(2px);
+}
+
+.battleResultCard {
+  background: rgba(12, 15, 19, 0.95);
+  border: 1px solid #2a2e36;
+  border-radius: 16px;
+  padding: 18px;
+  text-align: center;
+  width: min(90%, 300px);
+  box-shadow: 0 0 30px rgba(0, 0, 0, 0.4);
+}
+
+.battleResultTitle {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.battleResultSubtitle {
+  font-size: 12px;
+  opacity: 0.7;
+  margin-top: 6px;
+}
+
+.battleResultActions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.battleBtn {
+  border-radius: 12px;
+  border: 1px solid #2a2e36;
+  background: rgba(18, 21, 27, 0.9);
+  color: #eaeef7;
+  padding: 10px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.battleBtn.primary {
+  background: linear-gradient(90deg, #4b6bff, #7fb1ff);
+  border-color: transparent;
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(75, 107, 255, 0.35);
+}
+
+.battleHint {
+  font-size: 11px;
+  opacity: 0.65;
+  text-align: center;
+}
+
+.battleCoinStatus {
+  font-size: 11px;
+  text-align: center;
+  color: #ffd27a;
+}
+
+@media (min-width: 480px) {
+  .battleGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@keyframes coinSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+`;
+
+function pickOpponent(playerId) {
+  const options = CHARACTER_POOL.filter((character) => character.id !== playerId);
+  return options[Math.floor(Math.random() * options.length)];
+}
+
+function randomFrom(list) {
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+function randomVelocity(speed) {
+  const angle = Math.random() * Math.PI * 2;
+  return {
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+  };
+}
+
+function moveEntity(entity, bounds, radius, delta) {
+  entity.x += entity.vx * delta;
+  entity.y += entity.vy * delta;
+
+  if (entity.x < radius) {
+    entity.x = radius;
+    entity.vx = Math.abs(entity.vx);
+  }
+  if (entity.x > bounds.width - radius) {
+    entity.x = bounds.width - radius;
+    entity.vx = -Math.abs(entity.vx);
+  }
+  if (entity.y < radius) {
+    entity.y = radius;
+    entity.vy = Math.abs(entity.vy);
+  }
+  if (entity.y > bounds.height - radius) {
+    entity.y = bounds.height - radius;
+    entity.vy = -Math.abs(entity.vy);
+  }
+}
+
+function clampSpeed(entity, maxSpeed) {
+  const speed = Math.hypot(entity.vx, entity.vy);
+  if (speed > maxSpeed) {
+    const scale = maxSpeed / speed;
+    entity.vx *= scale;
+    entity.vy *= scale;
+  }
+  if (speed < 0.4) {
+    const scale = 0.4 / (speed || 1);
+    entity.vx *= scale;
+    entity.vy *= scale;
+  }
+}
+
+function applyPosition(element, x, y, radius) {
+  if (!element) return;
+  element.style.transform = `translate(${x - radius}px, ${y - radius}px)`;
+}
+
+function distance(x1, y1, x2, y2) {
+  return Math.hypot(x1 - x2, y1 - y2);
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function randBetween(min, max) {
+  return min + Math.random() * (max - min);
+}
+
+function getInitials(name) {
+  if (!name) return "?";
+  const cleaned = name.replace(/[()]/g, "").trim();
+  const parts = cleaned.split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  if (parts[0].length <= 3 && parts[0] === parts[0].toUpperCase()) {
+    return parts[0].slice(0, 3);
+  }
+  return parts
+    .slice(0, 3)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
+}
+
+function getAvatarGradient(name) {
+  const palette = [
+    ["#3b82f6", "#1e40af"],
+    ["#8b5cf6", "#4c1d95"],
+    ["#ec4899", "#9d174d"],
+    ["#22c55e", "#15803d"],
+    ["#eab308", "#a16207"],
+    ["#14b8a6", "#0f766e"],
+    ["#f97316", "#c2410c"],
+  ];
+  const index = Math.abs(hashString(name)) % palette.length;
+  const [start, end] = palette[index];
+  return `linear-gradient(140deg, ${start}, ${end})`;
+}
+
+function getAvatarBackground(character) {
+  const gradient = getAvatarGradient(character?.name ?? "");
+  if (character?.image) {
+    return `url("${character.image}"), ${gradient}`;
+  }
+  return gradient;
+}
+
+function hashString(value) {
+  let hash = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    hash = (hash << 5) - hash + value.charCodeAt(i);
+    hash |= 0;
+  }
+  return hash;
+}
+
+

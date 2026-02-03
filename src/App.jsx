@@ -7,6 +7,7 @@ import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { sendCalls, getCapabilities, readContract } from "@wagmi/core";
 import { parseAbi, encodeFunctionData } from "viem";
+import BattleArenaScreen from "./BattleArena";
 
 /** @typedef {import("./types").PolymarketMarket} PolymarketMarket */
 /** @typedef {import("./types").ArenaStake} ArenaStake */
@@ -289,6 +290,17 @@ function TriBalanceApp() {
     );
   }
 
+  if (path === "/battle") {
+    return (
+      <Shell>
+        <Header activePath={path} onNavigate={navigate} />
+        <BattleArenaScreen />
+        <Footer />
+        {toast && <Toast message={toast} />}
+      </Shell>
+    );
+  }
+
   const total = Math.max(1, powers.meta + powers.cast + powers.mon);
   const pct = {
     meta: Math.round((powers.meta / total) * 100),
@@ -406,6 +418,14 @@ function Header({ activePath = "/", onNavigate, showNav = true }) {
             type="button"
           >
             Arena
+          </button>
+          <button
+            className="navBtn"
+            data-active={activePath === "/battle" ? "1" : "0"}
+            onClick={() => onNavigate?.("/battle")}
+            type="button"
+          >
+            Battle
           </button>
           <button
             className="navBtn"
