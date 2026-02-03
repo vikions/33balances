@@ -309,18 +309,18 @@ export default function BattleArenaScreen() {
         playerState.vy += (Math.random() - 0.5) * 0.35;
       }
 
-      if (Math.random() < 0.08) {
-        opponentState.vx += (Math.random() - 0.5) * 0.4;
-        opponentState.vy += (Math.random() - 0.5) * 0.4;
-      }
-
       const activeCoin = coinStateRef.current;
       if (activeCoin.active && !activeCoin.owner) {
         const dx = activeCoin.position.x - opponentState.x;
         const dy = activeCoin.position.y - opponentState.y;
         const dist = Math.hypot(dx, dy) || 1;
-        opponentState.vx += (dx / dist) * 0.05;
-        opponentState.vy += (dy / dist) * 0.05;
+        const targetVx = (dx / dist) * OPPONENT_MAX_SPEED;
+        const targetVy = (dy / dist) * OPPONENT_MAX_SPEED;
+        opponentState.vx = lerp(opponentState.vx, targetVx, 0.12);
+        opponentState.vy = lerp(opponentState.vy, targetVy, 0.12);
+      } else if (Math.random() < 0.08) {
+        opponentState.vx += (Math.random() - 0.5) * 0.4;
+        opponentState.vy += (Math.random() - 0.5) * 0.4;
       }
 
       clampSpeed(playerState, PLAYER_MAX_SPEED);
@@ -520,7 +520,7 @@ export default function BattleArenaScreen() {
                     className="battleHeart"
                     data-dead={index >= playerLives ? "1" : "0"}
                   >
-                    ?
+                    {"\u2665"}
                   </span>
                 ))}
               </div>
@@ -535,7 +535,7 @@ export default function BattleArenaScreen() {
                     className="battleHeart"
                     data-dead={index >= opponentLives ? "1" : "0"}
                   >
-                    ?
+                    {"\u2665"}
                   </span>
                 ))}
               </div>
@@ -624,18 +624,20 @@ export default function BattleArenaScreen() {
                 style={{ "--coin-color": coinState.type.color }}
                 aria-label={`${coinState.type.name} coin`}
               >
-                <div className="battleCoinSymbol">
-                  {coinState.type.icon ? (
-                    <img
-                      className="battleCoinIcon"
-                      src={coinState.type.icon}
-                      alt={coinState.type.label}
-                    />
-                  ) : (
-                    <span>{coinState.type.symbol}</span>
-                  )}
+                <div className="battleCoinInner">
+                  <div className="battleCoinSymbol">
+                    {coinState.type.icon ? (
+                      <img
+                        className="battleCoinIcon"
+                        src={coinState.type.icon}
+                        alt={coinState.type.label}
+                      />
+                    ) : (
+                      <span>{coinState.type.symbol}</span>
+                    )}
+                  </div>
+                  <div className="battleCoinLabel">{coinState.type.label}</div>
                 </div>
-                <div className="battleCoinLabel">{coinState.type.label}</div>
               </div>
             )}
 
@@ -883,13 +885,18 @@ const battleArenaCss = `
   border: 1px solid rgba(255, 255, 255, 0.15);
   display: grid;
   place-items: center;
-  gap: 1px;
-  text-align: center;
   color: #1b1200;
   font-weight: 700;
   box-shadow: 0 0 14px color-mix(in srgb, var(--coin-color), transparent 60%);
-  animation: coinSpin 6s linear infinite;
   will-change: transform;
+}
+
+.battleCoinInner {
+  display: grid;
+  place-items: center;
+  gap: 1px;
+  text-align: center;
+  animation: coinSpin 6s linear infinite;
 }
 
 .battleCoinSymbol {
