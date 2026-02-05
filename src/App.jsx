@@ -161,23 +161,21 @@ function ThreeBalanceApp() {
   );
 
   const handleShareResult = useCallback(
-    async ({ winner, player, opponent, coin }) => {
+    async ({ winner, opponent }) => {
       if (!composeCast) {
         showToast("Share is unavailable in this client.");
         return;
       }
 
-      const opponentName = opponent?.name || "your opponent";
-      const playerName = player?.name || "my fighter";
-      const coinLabel = coin?.label ? ` (${coin.label})` : "";
+      const opponentName = opponent?.name || "my opponent";
       const resultLine =
         winner === "player"
-          ? `I just beat ${opponentName}${coinLabel} in 3balance.`
-          : `I just got knocked by ${opponentName} in 3balance.`;
+          ? `Just defeated ${opponentName}. ⚔️🔥 Try battling the crypto elite right now.`
+          : `Just lost to ${opponentName}. 💥😅 Try battling the crypto elite right now.`;
 
       const origin =
         typeof window !== "undefined" ? window.location.origin : "";
-      const shareUrl = origin ? `${origin}/battle` : "";
+      const shareUrl = origin || "";
 
       try {
         await composeCast({

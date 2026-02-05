@@ -146,6 +146,7 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
   const coinRef = useRef(null);
   const runningRef = useRef(false);
   const introTimerRef = useRef(null);
+  const autoShareRef = useRef(false);
   const controlRef = useRef({
     active: false,
     targetX: 0,
@@ -206,6 +207,7 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
       coinStateRef.current.respawnAt = 0;
       coinStateRef.current.ownerExpiresAt = 0;
       hitCooldownRef.current = 0;
+      autoShareRef.current = false;
       setPhase("intro");
     },
     [player, setEntryStatus, setOpponentLivesSafe, setPlayerLivesSafe, updateCoinState]
@@ -223,6 +225,7 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
     setPhase("select");
     updateCoinState({ owner: null, active: false });
     coinStateRef.current.ownerExpiresAt = 0;
+    autoShareRef.current = false;
     if (introTimerRef.current) {
       clearTimeout(introTimerRef.current);
     }
@@ -275,6 +278,19 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
       coin: coinState.type,
     });
   }, [coinState.type, onShareResult, opponent, player, winner]);
+
+  useEffect(() => {
+    if (!onShareResult || !winner || !player || !opponent) return;
+    if (phase !== "ended") return;
+    if (autoShareRef.current) return;
+    autoShareRef.current = true;
+    onShareResult({
+      winner,
+      player,
+      opponent,
+      coin: coinState.type,
+    });
+  }, [coinState.type, onShareResult, opponent, phase, player, winner]);
 
   const spawnCoin = useCallback(() => {
     if (!fieldSize.width || !fieldSize.height) return;
@@ -1208,19 +1224,19 @@ const battleArenaCss = `
   background: rgba(12, 15, 19, 0.95);
   border: 1px solid #2a2e36;
   border-radius: 16px;
-  padding: 18px;
+  padding: 22px;
   text-align: center;
-  width: min(90%, 300px);
+  width: min(94%, 360px);
   box-shadow: 0 0 30px rgba(0, 0, 0, 0.4);
 }
 
 .battleResultTitle {
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 800;
 }
 
 .battleResultSubtitle {
-  font-size: 12px;
+  font-size: 13px;
   opacity: 0.7;
   margin-top: 6px;
 }
@@ -1228,8 +1244,8 @@ const battleArenaCss = `
 .battleResultActions {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-top: 14px;
+  gap: 10px;
+  margin-top: 16px;
 }
 
 .battleBtn {
@@ -1237,8 +1253,8 @@ const battleArenaCss = `
   border: 1px solid #2a2e36;
   background: rgba(18, 21, 27, 0.9);
   color: #eaeef7;
-  padding: 10px 12px;
-  font-size: 12px;
+  padding: 12px 14px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
 }
