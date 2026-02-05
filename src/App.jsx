@@ -54,7 +54,7 @@ function ThreeBalanceApp() {
   const { address, chain } = useAccount();
   const { connect, connectors, isPending } = useConnect();
   const { switchChain } = useSwitchChain();
-  const { context } = useMiniKit();
+  const { context, setFrameReady, isFrameReady } = useMiniKit();
   const { composeCast } = useComposeCast();
 
   const [statusMessage, setStatusMessage] = useState("");
@@ -80,6 +80,11 @@ function ThreeBalanceApp() {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!setFrameReady || isFrameReady) return;
+    setFrameReady();
+  }, [isFrameReady, setFrameReady]);
 
   // Auto-switch to Base when connected.
   useEffect(() => {
