@@ -120,7 +120,7 @@ const COIN_HOLD_DURATION = 6000;
 const COIN_RESPAWN_DELAY = 2000;
 const INTRO_DURATION = 1400;
 
-export default function BattleArenaScreen({ onEnterMatch }) {
+export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
   const [entryStatus, setEntryStatus] = useState({
     loading: false,
     message: "",
@@ -265,6 +265,16 @@ export default function BattleArenaScreen({ onEnterMatch }) {
     },
     [beginFight, entryStatus.loading, onEnterMatch, prepareMatch, setEntryStatus]
   );
+
+  const handleShare = useCallback(() => {
+    if (!onShareResult || !winner || !player || !opponent) return;
+    onShareResult({
+      winner,
+      player,
+      opponent,
+      coin: coinState.type,
+    });
+  }, [coinState.type, onShareResult, opponent, player, winner]);
 
   const spawnCoin = useCallback(() => {
     if (!fieldSize.width || !fieldSize.height) return;
@@ -779,6 +789,15 @@ export default function BattleArenaScreen({ onEnterMatch }) {
                     >
                       Play Again
                     </button>
+                    {onShareResult && (
+                      <button
+                        type="button"
+                        className="battleBtn"
+                        onClick={handleShare}
+                      >
+                        Share Result
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="battleBtn"

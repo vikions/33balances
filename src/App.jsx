@@ -3,6 +3,7 @@ import { WagmiProvider, useAccount, useConnect, useSwitchChain } from "wagmi";
 import { base } from "wagmi/chains";
 import { baseAccount } from "wagmi/connectors";
 import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
+import { useComposeCast, useMiniKit } from "@coinbase/onchainkit/minikit";
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { sendCalls, getCapabilities } from "@wagmi/core";
@@ -53,12 +54,20 @@ function ThreeBalanceApp() {
   const { address, chain } = useAccount();
   const { connect, connectors, isPending } = useConnect();
   const { switchChain } = useSwitchChain();
+  const { context } = useMiniKit();
+  const { composeCast } = useComposeCast();
 
   const [statusMessage, setStatusMessage] = useState("");
   const [toast, setToast] = useState("");
   const toastTimerRef = useRef(null);
 
   const connected = !!address;
+  const profile = context?.user ?? {};
+  const displayName =
+    profile.displayName ||
+    profile.username ||
+    (connected ? formatAddress(address) : "Anonymous");
+  const avatarUrl = profile.pfpUrl;
 
   const showToast = useCallback((nextMessage) => {
     setToast(nextMessage);
@@ -146,6 +155,37 @@ function ThreeBalanceApp() {
     [address, connected, showToast]
   );
 
+  const handleShareResult = useCallback(
+    async ({ winner, player, opponent, coin }) => {
+      if (!composeCast) {
+        showToast("Share is unavailable in this client.");
+        return;
+      }
+
+      const opponentName = opponent?.name || "your opponent";
+      const playerName = player?.name || "my fighter";
+      const coinLabel = coin?.label ? ` (${coin.label})` : "";
+      const resultLine =
+        winner === "player"
+          ? `I just beat ${opponentName}${coinLabel} in 3balance.`
+          : `I just got knocked by ${opponentName} in 3balance.`;
+
+      const origin =
+        typeof window !== "undefined" ? window.location.origin : "";
+      const shareUrl = origin ? `${origin}/battle` : "";
+
+      try {
+        await composeCast({
+          text: resultLine,
+          embeds: shareUrl ? [shareUrl] : undefined,
+        });
+      } catch (error) {
+        showToast("Share failed. Try again.");
+      }
+    },
+    [composeCast, showToast]
+  );
+
   return (
     <Shell>
       <Header />
@@ -153,11 +193,13 @@ function ThreeBalanceApp() {
       <WalletPanel
         connected={connected}
         address={address}
+        displayName={displayName}
+        avatarUrl={avatarUrl}
         isPending={isPending}
         statusMessage={statusMessage}
         onConnect={connectWallet}
       />
-      <BattleArenaScreen onEnterMatch={enterMatch} />
+      <BattleArenaScreen onEnterMatch={enterMatch} onShareResult={handleShareResult} />
       <Footer />
       {toast && <Toast message={toast} />}
     </Shell>
@@ -202,14 +244,32 @@ function Hero() {
   );
 }
 
-function WalletPanel({ connected, address, isPending, statusMessage, onConnect }) {
+function WalletPanel({
+  connected,
+  address,
+  displayName,
+  avatarUrl,
+  isPending,
+  statusMessage,
+  onConnect,
+}) {
   return (
     <div className="walletCard">
       <div className="walletRow">
-        <div>
-          <div className="walletLabel">Wallet</div>
-          <div className="walletValue">
-            {connected ? formatAddress(address) : "Not connected"}
+        <div className="walletIdentity">
+          {avatarUrl ? (
+            <img className="walletAvatar" src={avatarUrl} alt={displayName} />
+          ) : (
+            <div className="walletAvatar" data-fallback="1">
+              {displayName?.slice(0, 1) || "?"}
+            </div>
+          )}
+          <div>
+            <div className="walletLabel">Player</div>
+            <div className="walletValue">{displayName}</div>
+            <div className="walletAddress">
+              {connected ? formatAddress(address) : "Not connected"}
+            </div>
           </div>
         </div>
         {connected && <span className="walletTag">Ready</span>}
@@ -480,6 +540,30 @@ const walletCss = `
   gap: 10px;
 }
 
+.walletIdentity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.walletAvatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(123, 140, 255, 0.35);
+  background: rgba(16, 20, 30, 0.9);
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.walletAvatar[data-fallback="1"] {
+  color: #d7e2ff;
+}
+
 .walletLabel {
   font-size: 11px;
   opacity: 0.65;
@@ -490,6 +574,12 @@ const walletCss = `
 .walletValue {
   font-size: 14px;
   font-weight: 700;
+  margin-top: 2px;
+}
+
+.walletAddress {
+  font-size: 11px;
+  opacity: 0.55;
   margin-top: 2px;
 }
 
