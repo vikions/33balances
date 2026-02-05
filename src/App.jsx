@@ -5,24 +5,21 @@ import { baseAccount } from "wagmi/connectors";
 import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { sendCalls, getCapabilities, readContract } from "@wagmi/core";
+import { sendCalls, getCapabilities } from "@wagmi/core";
 import { parseAbi, encodeFunctionData } from "viem";
 import BattleArenaScreen from "./BattleArena";
 
 // === ADDRESS / CHAIN ===
-const CONTRACT_ADDRESS = "0x578D6936914d01a7d6225401715A4ee75C7D7602";
-const CHAIN_ID = base.id; // 8453
+const CONTRACT_ADDRESS =
+  import.meta.env?.VITE_BATTLE_ENTRY_CONTRACT ??
+  "0x7b62877EBe12d155F9bbC281fbDe8026F6a2Eccf";
 
 // Paymaster (Coinbase Developer Platform)
 const PAYMASTER_URL =
   "https://api.developer.coinbase.com/rpc/v1/base/mmo6mwwplQQx927oL1bz30eQZ33eEDOc";
 
 // === ABI ===
-const CONTRACT_ABI = parseAbi([
-  "function canVote(address user) view returns (bool)",
-  "function timeUntilNextVote(address user) view returns (uint256)",
-  "function vote(uint8 option)",
-]);
+const CONTRACT_ABI = parseAbi(["function enterMatch(string characterId)"]);
 
 // === WAGMI CONFIG ===
 // STRICT order: farcasterMiniApp() first, baseAccount() second
@@ -99,7 +96,7 @@ function ThreeBalanceApp() {
   };
 
   const enterMatch = useCallback(
-    async (_character) => {
+    async (character) => {
       if (!connected || !address) {
         return {
           ok: false,
@@ -109,35 +106,13 @@ function ThreeBalanceApp() {
 
       try {
         const account = address;
-        const entryChoiceId = 0;
-
-        const can = await readContract(config, {
-          address: CONTRACT_ADDRESS,
-          abi: CONTRACT_ABI,
-          functionName: "canVote",
-          args: [account],
-          chainId: CHAIN_ID,
-        });
-
-        if (!can) {
-          const cd = await readContract(config, {
-            address: CONTRACT_ADDRESS,
-            abi: CONTRACT_ABI,
-            functionName: "timeUntilNextVote",
-            args: [account],
-            chainId: CHAIN_ID,
-          });
-          const cdNum = Number(cd);
-          return {
-            ok: false,
-            message: `Entry cooldown: ~${Math.ceil(cdNum / 60)} minutes.`,
-          };
-        }
+        const characterId =
+          character?.id || character?.name || "unknown-character";
 
         const data = encodeFunctionData({
           abi: CONTRACT_ABI,
-          functionName: "vote",
-          args: [entryChoiceId],
+          functionName: "enterMatch",
+          args: [characterId],
         });
 
         const capabilities = await getCapabilities(config, { account });

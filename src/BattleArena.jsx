@@ -683,18 +683,20 @@ export default function BattleArenaScreen({ onEnterMatch }) {
                 </span>
               </div>
               {coinState.owner === "player" && (
-                <div className="battleCarry" data-coin={coinState.type.id}>
-                  {coinState.type.icon ? (
-                    <img
-                      className="battleCarryIcon"
-                      src={coinState.type.icon}
-                      alt={coinState.type.label}
-                    />
-                  ) : (
-                    <span className="battleCarrySymbol">
-                      {coinState.type.symbol}
-                    </span>
-                  )}
+                <div className="battleOrbit" data-coin={coinState.type.id}>
+                  <div className="battleOrbitIcon">
+                    {coinState.type.icon ? (
+                      <img
+                        className="battleOrbitImg"
+                        src={coinState.type.icon}
+                        alt={coinState.type.label}
+                      />
+                    ) : (
+                      <span className="battleOrbitSymbol">
+                        {coinState.type.symbol}
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -716,18 +718,20 @@ export default function BattleArenaScreen({ onEnterMatch }) {
                 </span>
               </div>
               {coinState.owner === "opponent" && (
-                <div className="battleCarry" data-coin={coinState.type.id}>
-                  {coinState.type.icon ? (
-                    <img
-                      className="battleCarryIcon"
-                      src={coinState.type.icon}
-                      alt={coinState.type.label}
-                    />
-                  ) : (
-                    <span className="battleCarrySymbol">
-                      {coinState.type.symbol}
-                    </span>
-                  )}
+                <div className="battleOrbit" data-coin={coinState.type.id}>
+                  <div className="battleOrbitIcon">
+                    {coinState.type.icon ? (
+                      <img
+                        className="battleOrbitImg"
+                        src={coinState.type.icon}
+                        alt={coinState.type.label}
+                      />
+                    ) : (
+                      <span className="battleOrbitSymbol">
+                        {coinState.type.symbol}
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -1133,33 +1137,42 @@ const battleArenaCss = `
   letter-spacing: 0.5px;
 }
 
-.battleCarry {
+.battleOrbit {
   position: absolute;
-  top: -6px;
-  right: -6px;
+  inset: -10px;
+  pointer-events: none;
+  animation: orbitSpin 1.1s linear infinite;
+}
+
+.battleOrbitIcon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
   width: 22px;
   height: 22px;
   border-radius: 50%;
-  background: rgba(15, 15, 15, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(15, 15, 15, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.18);
   display: grid;
   place-items: center;
-  box-shadow: 0 0 10px rgba(255, 255, 255, 0.15);
+  transform: translate(-50%, -50%) translateX(28px);
 }
 
-.battleCarrySymbol {
-  font-size: 12px;
+.battleOrbitSymbol {
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.battleOrbitImg {
+  width: 12px;
+  height: 12px;
+  display: block;
 }
 
 .battleCoinIcon {
   width: 16px;
   height: 16px;
-  display: block;
-}
-
-.battleCarryIcon {
-  width: 12px;
-  height: 12px;
   display: block;
 }
 
@@ -1237,6 +1250,15 @@ const battleArenaCss = `
 }
 
 @keyframes coinSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes orbitSpin {
   from {
     transform: rotate(0deg);
   }
