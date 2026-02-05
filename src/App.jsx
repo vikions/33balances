@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useCallback, useEffect, useRef, useState } from "react";
 import { WagmiProvider, useAccount, useConnect, useSwitchChain } from "wagmi";
 import { base } from "wagmi/chains";
 import { baseAccount } from "wagmi/connectors";
