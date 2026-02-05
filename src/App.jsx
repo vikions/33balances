@@ -169,7 +169,6 @@ function ThreeBalanceApp() {
 function Header() {
   return (
     <div className="header">
-      <div className="brandMark" aria-hidden />
       <div className="brand">3balance</div>
       <style>{headerCss}</style>
     </div>
@@ -293,7 +292,7 @@ const globalCss = `
   background-image: linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
   background-size: 48px 48px;
-  opacity: 0.2;
+  opacity: 0.18;
   pointer-events: none;
 }
 
@@ -313,24 +312,32 @@ const globalCss = `
 const headerCss = `
 .header {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.brandMark {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 30% 30%, #7fb1ff, #4b6bff 60%, #1b1f2b 100%);
-  box-shadow: 0 0 14px rgba(75, 107, 255, 0.7);
+  justify-content: center;
+  gap: 6px;
+  margin: 6px 0 16px;
+  text-align: center;
 }
 
 .brand {
   font-weight: 900;
-  font-size: 24px;
-  letter-spacing: 0.6px;
-  text-transform: lowercase;
+  font-size: 26px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: #eef3ff;
+  text-shadow: 0 6px 30px rgba(75, 107, 255, 0.45);
+  animation: brandGlow 4s ease-in-out infinite;
+}
+
+@keyframes brandGlow {
+  0%,
+  100% {
+    text-shadow: 0 6px 30px rgba(75, 107, 255, 0.35);
+  }
+  50% {
+    text-shadow: 0 6px 40px rgba(127, 177, 255, 0.7);
+  }
 }
 `;
 
@@ -342,6 +349,24 @@ const heroCss = `
   padding: 16px 16px 14px;
   box-shadow: 0 18px 40px rgba(7, 10, 20, 0.6);
   margin-bottom: 14px;
+  position: relative;
+  overflow: hidden;
+  text-align: center;
+}
+
+.hero::before {
+  content: "";
+  position: absolute;
+  inset: -60% -20%;
+  background: radial-gradient(circle, rgba(127, 177, 255, 0.22), transparent 60%),
+    radial-gradient(circle, rgba(168, 85, 247, 0.18), transparent 65%);
+  opacity: 0.6;
+  animation: heroGlow 8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.hero > * {
+  position: relative;
 }
 
 .heroBadge {
@@ -352,6 +377,7 @@ const heroCss = `
   text-transform: uppercase;
   letter-spacing: 1px;
   color: #9ec4ff;
+  animation: badgeFloat 3.2s ease-in-out infinite;
 }
 
 .heroTitle {
@@ -372,6 +398,7 @@ const heroCss = `
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-top: 12px;
+  justify-items: center;
 }
 
 .heroStat {
@@ -380,6 +407,15 @@ const heroCss = `
   border-radius: 12px;
   padding: 8px 8px;
   text-align: center;
+  animation: statFloat 4s ease-in-out infinite;
+}
+
+.heroStat:nth-child(2) {
+  animation-delay: 0.3s;
+}
+
+.heroStat:nth-child(3) {
+  animation-delay: 0.6s;
 }
 
 .heroStatLabel {
@@ -393,6 +429,36 @@ const heroCss = `
   margin-top: 4px;
   font-size: 12px;
   font-weight: 700;
+}
+
+@keyframes heroGlow {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-12px);
+  }
+}
+
+@keyframes badgeFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-4px);
+  }
+}
+
+@keyframes statFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
 }
 `;
 
