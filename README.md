@@ -93,4 +93,3 @@ Shared “prediction” layer for user-driven governance models
 🧾 License
 
 MIT © 2025 TriBalance Team
-Built during the spirit of Monad Mission 8, exploring the balance of Web3.
