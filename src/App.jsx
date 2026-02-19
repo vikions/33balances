@@ -1,14 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { WagmiProvider, useAccount, useConnect, useSwitchChain } from "wagmi";
 import { base } from "wagmi/chains";
 import { baseAccount } from "wagmi/connectors";
-import { farcasterMiniApp } from "@farcaster/miniapp-wagmi-connector";
 import { useComposeCast, useMiniKit } from "@coinbase/onchainkit/minikit";
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { sendCalls, getCapabilities } from "@wagmi/core";
 import { parseAbi, encodeFunctionData } from "viem";
-import BattleArenaScreen from "./BattleArena";
+
+const BattleArenaScreen = lazy(() => import("./BattleArena"));
 
 // === ADDRESS / CHAIN ===
 const CONTRACT_ADDRESS =
@@ -23,14 +23,12 @@ const PAYMASTER_URL =
 const CONTRACT_ABI = parseAbi(["function enterMatch(string characterId)"]);
 
 // === WAGMI CONFIG ===
-// STRICT order: farcasterMiniApp() first, baseAccount() second
 const config = createConfig({
   chains: [base],
   transports: {
     [base.id]: http(),
   },
   connectors: [
-    farcasterMiniApp(),
     baseAccount({
       appName: "3balance",
       appLogoUrl: "https://base.org/logo.png",
@@ -60,13 +58,17 @@ function ThreeBalanceApp() {
   const [statusMessage, setStatusMessage] = useState("");
   const [toast, setToast] = useState("");
   const toastTimerRef = useRef(null);
+  const connectAttemptedRef = useRef(false);
+  const topRef = useRef(null);
+  const profileRef = useRef(null);
+  const arenaRef = useRef(null);
 
   const connected = !!address;
   const profile = context?.user ?? {};
   const displayName =
     profile.displayName ||
     profile.username ||
-    (connected ? formatAddress(address) : "Anonymous");
+    "Base Player";
   const avatarUrl = profile.pfpUrl;
 
   const showToast = useCallback((nextMessage) => {
@@ -85,6 +87,16 @@ function ThreeBalanceApp() {
     if (!setFrameReady || isFrameReady) return;
     setFrameReady();
   }, [isFrameReady, setFrameReady]);
+
+  useEffect(() => {
+    if (connected || isPending || connectAttemptedRef.current) return;
+    const connector = connectors[0];
+    if (!connector) return;
+    connectAttemptedRef.current = true;
+    connect({ connector }).catch(() => {
+      setStatusMessage("Connect your Base Account to play.");
+    });
+  }, [connect, connected, connectors, isPending]);
 
   // Auto-switch to Base when connected.
   useEffect(() => {
@@ -170,8 +182,8 @@ function ThreeBalanceApp() {
       const opponentName = opponent?.name || "my opponent";
       const resultLine =
         winner === "player"
-          ? `Just defeated ${opponentName}. ⚔️🔥 Try battling the crypto elite right now.`
-          : `Just lost to ${opponentName}. 💥😅 Try battling the crypto elite right now.`;
+          ? `Just defeated ${opponentName}. Try battling the crypto elite right now.`
+          : `Just lost to ${opponentName}. Try battling the crypto elite right now.`;
 
       const origin =
         typeof window !== "undefined" ? window.location.origin : "";
@@ -182,28 +194,48 @@ function ThreeBalanceApp() {
           text: resultLine,
           embeds: shareUrl ? [shareUrl] : undefined,
         });
-      } catch (error) {
+      } catch {
         showToast("Share failed. Try again.");
       }
     },
     [composeCast, showToast]
   );
 
+  const scrollToRef = useCallback((ref) => {
+    if (!ref?.current) return;
+    ref.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, []);
+
   return (
     <Shell>
-      <Header />
-      <Hero />
-      <WalletPanel
-        connected={connected}
-        address={address}
-        displayName={displayName}
-        avatarUrl={avatarUrl}
-        isPending={isPending}
-        statusMessage={statusMessage}
-        onConnect={connectWallet}
-      />
-      <BattleArenaScreen onEnterMatch={enterMatch} onShareResult={handleShareResult} />
+      <div ref={topRef}>
+        <Header />
+        <Hero />
+      </div>
+      <div ref={profileRef}>
+        <WalletPanel
+          connected={connected}
+          displayName={displayName}
+          avatarUrl={avatarUrl}
+          isPending={isPending}
+          statusMessage={statusMessage}
+          onConnect={connectWallet}
+        />
+      </div>
+      <div ref={arenaRef}>
+        <Suspense fallback={<LoadingCard />}>
+          <BattleArenaScreen
+            onEnterMatch={enterMatch}
+            onShareResult={handleShareResult}
+          />
+        </Suspense>
+      </div>
       <Footer />
+      <BottomNav
+        onHome={() => scrollToRef(topRef)}
+        onProfile={() => scrollToRef(profileRef)}
+        onBattle={() => scrollToRef(arenaRef)}
+      />
       {toast && <Toast message={toast} />}
     </Shell>
   );
@@ -247,9 +279,34 @@ function Hero() {
   );
 }
 
+function LoadingCard() {
+  return (
+    <div className="loadingCard" role="status" aria-live="polite">
+      Loading arena...
+      <style>{loadingCss}</style>
+    </div>
+  );
+}
+
+function BottomNav({ onHome, onProfile, onBattle }) {
+  return (
+    <nav className="bottomNav" aria-label="Primary navigation">
+      <button className="navBtn" type="button" onClick={onHome}>
+        Home
+      </button>
+      <button className="navBtn" type="button" onClick={onProfile}>
+        Profile
+      </button>
+      <button className="navBtn" type="button" onClick={onBattle}>
+        Battle
+      </button>
+      <style>{bottomNavCss}</style>
+    </nav>
+  );
+}
+
 function WalletPanel({
   connected,
-  address,
   displayName,
   avatarUrl,
   isPending,
@@ -271,7 +328,7 @@ function WalletPanel({
             <div className="walletLabel">Player</div>
             <div className="walletValue">{displayName}</div>
             <div className="walletAddress">
-              {connected ? formatAddress(address) : "Not connected"}
+              {connected ? "Base Account connected" : "Not connected"}
             </div>
           </div>
         </div>
@@ -319,11 +376,6 @@ function Toast({ message }) {
   );
 }
 
-function formatAddress(address) {
-  if (!address) return "-";
-  return address.slice(0, 6) + "..." + address.slice(-4);
-}
-
 function humanError(e) {
   return (
     e?.shortMessage ||
@@ -336,13 +388,20 @@ function humanError(e) {
 
 const globalCss = `
 .appShell {
+  --page-fg: #e8ecff;
+  --surface: rgba(11, 14, 22, 0.86);
+  --surface-border: rgba(90, 110, 200, 0.3);
+  --surface-soft: rgba(10, 13, 22, 0.8);
+  --accent-1: #4666ff;
+  --accent-2: #7fb1ff;
+  --muted: rgba(232, 236, 255, 0.65);
   min-height: 100vh;
   background: radial-gradient(1200px 600px at 50% -20%, rgba(74, 108, 255, 0.2), transparent),
     radial-gradient(900px 500px at 10% 10%, rgba(168, 85, 247, 0.18), transparent),
     #07080d;
-  color: #e8ecff;
-  padding: 20px 16px 40px;
-  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  color: var(--page-fg);
+  padding: 20px 16px 104px;
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   max-width: 480px;
   margin: 0 auto;
   position: relative;
@@ -369,6 +428,27 @@ const globalCss = `
   font-size: 11px;
   opacity: 0.55;
   letter-spacing: 0.3px;
+}
+
+@media (prefers-color-scheme: light) {
+  .appShell {
+    --page-fg: #142033;
+    --surface: rgba(244, 248, 255, 0.94);
+    --surface-border: rgba(79, 106, 182, 0.28);
+    --surface-soft: rgba(233, 240, 255, 0.92);
+    --accent-1: #2f58e8;
+    --accent-2: #4f79ff;
+    --muted: rgba(20, 32, 51, 0.6);
+    background: radial-gradient(1200px 600px at 50% -20%, rgba(100, 130, 255, 0.14), transparent),
+      radial-gradient(900px 500px at 10% 10%, rgba(90, 113, 255, 0.12), transparent),
+      #f4f7ff;
+  }
+
+  .appShell::before {
+    background-image: linear-gradient(rgba(42, 64, 120, 0.08) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(42, 64, 120, 0.08) 1px, transparent 1px);
+    opacity: 0.2;
+  }
 }
 `;
 
@@ -447,11 +527,12 @@ const heroCss = `
   font-size: 24px;
   font-weight: 800;
   margin-top: 6px;
+  color: var(--page-fg);
 }
 
 .heroSubtitle {
   font-size: 12px;
-  opacity: 0.7;
+  color: var(--muted);
   margin-top: 6px;
   line-height: 1.5;
 }
@@ -465,7 +546,7 @@ const heroCss = `
 }
 
 .heroStat {
-  background: rgba(10, 13, 22, 0.8);
+  background: var(--surface-soft);
   border: 1px solid rgba(123, 140, 255, 0.18);
   border-radius: 12px;
   padding: 8px 8px;
@@ -483,7 +564,7 @@ const heroCss = `
 
 .heroStatLabel {
   font-size: 9px;
-  opacity: 0.6;
+  color: var(--muted);
   letter-spacing: 0.8px;
   text-transform: uppercase;
 }
@@ -492,6 +573,7 @@ const heroCss = `
   margin-top: 4px;
   font-size: 12px;
   font-weight: 700;
+  color: var(--page-fg);
 }
 
 @keyframes heroGlow {
@@ -523,12 +605,24 @@ const heroCss = `
     transform: translateY(-6px);
   }
 }
+
+@media (prefers-color-scheme: light) {
+  .hero {
+    background: linear-gradient(140deg, rgba(250, 252, 255, 0.95), rgba(235, 242, 255, 0.95));
+    border-color: rgba(79, 106, 182, 0.25);
+    box-shadow: 0 12px 32px rgba(54, 73, 125, 0.16);
+  }
+
+  .heroBadge {
+    color: #3858cc;
+  }
+}
 `;
 
 const walletCss = `
 .walletCard {
-  background: rgba(11, 14, 22, 0.86);
-  border: 1px solid rgba(90, 110, 200, 0.3);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
   border-radius: 16px;
   padding: 14px;
   display: grid;
@@ -569,7 +663,7 @@ const walletCss = `
 
 .walletLabel {
   font-size: 11px;
-  opacity: 0.65;
+  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.6px;
 }
@@ -582,7 +676,7 @@ const walletCss = `
 
 .walletAddress {
   font-size: 11px;
-  opacity: 0.55;
+  color: var(--muted);
   margin-top: 2px;
 }
 
@@ -608,8 +702,9 @@ const buttonCss = `
   border-radius: 12px;
   border: 1px solid rgba(123, 140, 255, 0.4);
   background: rgba(14, 17, 25, 0.9);
-  color: #e8ecff;
+  color: var(--page-fg);
   padding: 10px 14px;
+  min-height: 44px;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
@@ -617,7 +712,7 @@ const buttonCss = `
 }
 
 .btn[data-primary="1"] {
-  background: linear-gradient(90deg, #4666ff, #7fb1ff);
+  background: linear-gradient(90deg, var(--accent-1), var(--accent-2));
   border-color: transparent;
   box-shadow: 0 10px 28px rgba(70, 102, 255, 0.35);
   color: #fff;
@@ -630,6 +725,64 @@ const buttonCss = `
 
 .btn:not(:disabled):hover {
   transform: translateY(-1px);
+}
+
+@media (prefers-color-scheme: light) {
+  .btn {
+    background: rgba(245, 249, 255, 0.95);
+    border-color: rgba(79, 106, 182, 0.3);
+  }
+}
+`;
+
+const loadingCss = `
+.loadingCard {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 16px;
+  min-height: 84px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 14px;
+}
+`;
+
+const bottomNavCss = `
+.bottomNav {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 12px);
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  width: min(440px, calc(100vw - 24px));
+  padding: 8px;
+  border-radius: 16px;
+  border: 1px solid var(--surface-border);
+  background: color-mix(in srgb, var(--surface), #000 8%);
+  backdrop-filter: blur(10px);
+  z-index: 50;
+}
+
+.navBtn {
+  min-height: 44px;
+  border-radius: 12px;
+  border: 1px solid rgba(123, 140, 255, 0.35);
+  background: rgba(14, 17, 25, 0.92);
+  color: var(--page-fg);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+@media (prefers-color-scheme: light) {
+  .navBtn {
+    background: rgba(245, 249, 255, 0.98);
+    border-color: rgba(79, 106, 182, 0.35);
+  }
 }
 `;
 

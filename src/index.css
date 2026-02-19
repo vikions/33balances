@@ -1,9 +1,9 @@
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
+  font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   line-height: 1.5;
   font-weight: 400;
 
-  color-scheme: dark;
+  color-scheme: light dark;
   color: rgba(255, 255, 255, 0.87);
   background-color: #07080d;
 
@@ -35,4 +35,16 @@ body,
 #root {
   width: 100%;
   min-height: 100vh;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    color: #142033;
+    background-color: #f4f7ff;
+  }
+
+  body {
+    background-color: #f4f7ff;
+    color: #142033;
+  }
 }
