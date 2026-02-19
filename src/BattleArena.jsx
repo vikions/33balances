@@ -253,7 +253,7 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
           });
           return;
         }
-      } catch (error) {
+      } catch {
         setEntryStatus({
           loading: false,
           message: "Entry failed. Try again.",
@@ -324,63 +324,32 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
     return () => observer.disconnect();
   }, [phase]);
 
-  useEffect(() => {
-    if (phase !== "playing" || !fieldSize.width || !fieldSize.height) return;
-    if (!player || !opponent) return;
+  const handleHit = useCallback(
+    (owner, now) => {
+      if (owner === "player") {
+        const nextLives = Math.max(0, opponentLivesRef.current - 1);
+        setOpponentLivesSafe(nextLives);
+        if (nextLives === 0) {
+          setWinner("player");
+          setPhase("ended");
+          runningRef.current = false;
+        }
+      } else {
+        const nextLives = Math.max(0, playerLivesRef.current - 1);
+        setPlayerLivesSafe(nextLives);
+        if (nextLives === 0) {
+          setWinner("opponent");
+          setPhase("ended");
+          runningRef.current = false;
+        }
+      }
 
-    runningRef.current = true;
-
-    const bounds = { width: fieldSize.width, height: fieldSize.height };
-    const playerStart = {
-      x: bounds.width * 0.25,
-      y: bounds.height * 0.6,
-    };
-    const opponentStart = {
-      x: bounds.width * 0.75,
-      y: bounds.height * 0.4,
-    };
-
-    const playerVelocity = randomVelocity(PLAYER_MAX_SPEED * 0.6);
-    const opponentVelocity = randomVelocity(OPPONENT_MAX_SPEED * 0.6);
-
-    positionsRef.current.player = {
-      ...playerStart,
-      ...playerVelocity,
-    };
-    positionsRef.current.opponent = {
-      ...opponentStart,
-      ...opponentVelocity,
-    };
-
-    applyPosition(playerRef.current, playerStart.x, playerStart.y, BALL_RADIUS);
-    applyPosition(
-      opponentRef.current,
-      opponentStart.x,
-      opponentStart.y,
-      BALL_RADIUS
-    );
-
-    spawnCoin();
-
-    let rafId = 0;
-    let lastTime = performance.now();
-
-    const loop = (now) => {
-      if (!runningRef.current) return;
-      const delta = Math.min(2.5, (now - lastTime) / 16.67);
-      lastTime = now;
-
-      tick(delta, now, bounds);
-      rafId = requestAnimationFrame(loop);
-    };
-
-    rafId = requestAnimationFrame(loop);
-
-    return () => {
-      runningRef.current = false;
-      if (rafId) cancelAnimationFrame(rafId);
-    };
-  }, [fieldSize.height, fieldSize.width, opponent, phase, player, roundId, spawnCoin]);
+      updateCoinState({ owner: null, active: false });
+      coinStateRef.current.ownerExpiresAt = 0;
+      coinStateRef.current.respawnAt = now + COIN_RESPAWN_DELAY;
+    },
+    [setOpponentLivesSafe, setPlayerLivesSafe, updateCoinState]
+  );
 
   const tick = useCallback(
     (delta, now, bounds) => {
@@ -502,35 +471,66 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
         }
       }
     },
-    [spawnCoin, updateCoinState]
+    [handleHit, spawnCoin, updateCoinState]
   );
 
-  const handleHit = useCallback(
-    (owner, now) => {
-      if (owner === "player") {
-        const nextLives = Math.max(0, opponentLivesRef.current - 1);
-        setOpponentLivesSafe(nextLives);
-        if (nextLives === 0) {
-          setWinner("player");
-          setPhase("ended");
-          runningRef.current = false;
-        }
-      } else {
-        const nextLives = Math.max(0, playerLivesRef.current - 1);
-        setPlayerLivesSafe(nextLives);
-        if (nextLives === 0) {
-          setWinner("opponent");
-          setPhase("ended");
-          runningRef.current = false;
-        }
-      }
+  useEffect(() => {
+    if (phase !== "playing" || !fieldSize.width || !fieldSize.height) return;
+    if (!player || !opponent) return;
 
-      updateCoinState({ owner: null, active: false });
-      coinStateRef.current.ownerExpiresAt = 0;
-      coinStateRef.current.respawnAt = now + COIN_RESPAWN_DELAY;
-    },
-    [setOpponentLivesSafe, setPlayerLivesSafe, updateCoinState]
-  );
+    runningRef.current = true;
+
+    const bounds = { width: fieldSize.width, height: fieldSize.height };
+    const playerStart = {
+      x: bounds.width * 0.25,
+      y: bounds.height * 0.6,
+    };
+    const opponentStart = {
+      x: bounds.width * 0.75,
+      y: bounds.height * 0.4,
+    };
+
+    const playerVelocity = randomVelocity(PLAYER_MAX_SPEED * 0.6);
+    const opponentVelocity = randomVelocity(OPPONENT_MAX_SPEED * 0.6);
+
+    positionsRef.current.player = {
+      ...playerStart,
+      ...playerVelocity,
+    };
+    positionsRef.current.opponent = {
+      ...opponentStart,
+      ...opponentVelocity,
+    };
+
+    applyPosition(playerRef.current, playerStart.x, playerStart.y, BALL_RADIUS);
+    applyPosition(
+      opponentRef.current,
+      opponentStart.x,
+      opponentStart.y,
+      BALL_RADIUS
+    );
+
+    spawnCoin();
+
+    let rafId = 0;
+    let lastTime = performance.now();
+
+    const loop = (now) => {
+      if (!runningRef.current) return;
+      const delta = Math.min(2.5, (now - lastTime) / 16.67);
+      lastTime = now;
+
+      tick(delta, now, bounds);
+      rafId = requestAnimationFrame(loop);
+    };
+
+    rafId = requestAnimationFrame(loop);
+
+    return () => {
+      runningRef.current = false;
+      if (rafId) cancelAnimationFrame(rafId);
+    };
+  }, [fieldSize.height, fieldSize.width, opponent, phase, player, roundId, spawnCoin, tick]);
 
   const handlePointerDown = useCallback(
     (event) => {
@@ -985,6 +985,7 @@ const battleArenaCss = `
   border: 1px solid #2a2e36;
   border-radius: 14px;
   padding: 10px;
+  min-height: 48px;
   color: #eaeef7;
   cursor: pointer;
   transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
@@ -1254,6 +1255,7 @@ const battleArenaCss = `
   background: rgba(18, 21, 27, 0.9);
   color: #eaeef7;
   padding: 12px 14px;
+  min-height: 44px;
   font-size: 13px;
   font-weight: 700;
   cursor: pointer;
@@ -1281,6 +1283,50 @@ const battleArenaCss = `
 @media (min-width: 480px) {
   .battleGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-color-scheme: light) {
+  .battleCard {
+    background: rgba(245, 248, 255, 0.92);
+    border-color: rgba(79, 106, 182, 0.25);
+    color: #13213a;
+  }
+
+  .battleCard:hover {
+    border-color: #4b6bff;
+    background: rgba(238, 244, 255, 0.96);
+  }
+
+  .battleDesc,
+  .battleSubtitle,
+  .battleHint,
+  .battleHudVs {
+    opacity: 0.7;
+    color: #41516f;
+  }
+
+  .battleField {
+    background: #f4f7ff;
+    border-color: rgba(79, 106, 182, 0.25);
+  }
+
+  .battleBall {
+    background: radial-gradient(circle at 30% 30%, #ffffff, #e6eeff 70%);
+    border-color: #d6e1ff;
+  }
+
+  .battleResultCard,
+  .battleIntro {
+    background: rgba(250, 252, 255, 0.95);
+    border-color: rgba(79, 106, 182, 0.25);
+    color: #13213a;
+  }
+
+  .battleBtn {
+    background: rgba(244, 248, 255, 0.96);
+    border-color: rgba(79, 106, 182, 0.28);
+    color: #13213a;
   }
 }
 

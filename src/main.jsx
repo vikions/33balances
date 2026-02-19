@@ -3,8 +3,6 @@ import ReactDOM from 'react-dom/client';
 import { OnchainKitProvider } from '@coinbase/onchainkit';
 import { base } from 'wagmi/chains';
 import App from './App';
-import MiniAppProvider from './MiniAppProvider';
-import { tryReadyMiniApp } from './miniapp';
 
 import '@coinbase/onchainkit/styles.css';
 
@@ -18,11 +16,6 @@ ReactDOM.createRoot(root).render(
     chain={base}
     miniKit={{ enabled: true }}
   >
-    <MiniAppProvider>
-      <App />
-    </MiniAppProvider>
+    <App />
   </OnchainKitProvider>
 );
-
-
-tryReadyMiniApp();
