@@ -25,16 +25,19 @@ a:hover {
 body {
   margin: 0;
   min-width: 320px;
-  min-height: 100vh;
+  min-height: 100dvh;
   background-color: #07080d;
   color: #e8ecff;
+  overflow: hidden;
 }
 
 html,
 body,
 #root {
   width: 100%;
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 100dvh;
+  overflow: hidden;
 }
 
 @media (prefers-color-scheme: light) {

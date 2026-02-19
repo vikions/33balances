@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Component, lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { WagmiProvider, useAccount, useConnect, useSwitchChain } from "wagmi";
 import { base } from "wagmi/chains";
 import { baseAccount } from "wagmi/connectors";
@@ -38,22 +38,49 @@ const config = createConfig({
 
 const queryClient = new QueryClient();
 
+class MiniKitErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback ?? null;
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
-        <ThreeBalanceApp />
+        <MiniKitErrorBoundary fallback={<ThreeBalanceAppCore />}>
+          <ThreeBalanceAppWithMiniKit />
+        </MiniKitErrorBoundary>
       </QueryClientProvider>
     </WagmiProvider>
   );
 }
 
-function ThreeBalanceApp() {
+function ThreeBalanceAppWithMiniKit() {
+  const miniKit = useMiniKit();
+  const { composeCast } = useComposeCast();
+  return <ThreeBalanceAppCore miniKit={miniKit} composeCast={composeCast} />;
+}
+
+function ThreeBalanceAppCore({ miniKit = null, composeCast = null }) {
   const { address, chain } = useAccount();
   const { connect, connectors, isPending } = useConnect();
   const { switchChain } = useSwitchChain();
-  const { context, setFrameReady, isFrameReady } = useMiniKit();
-  const { composeCast } = useComposeCast();
+  const context = miniKit?.context;
+  const setFrameReady = miniKit?.setFrameReady;
+  const isFrameReady = miniKit?.isFrameReady;
 
   const [statusMessage, setStatusMessage] = useState("");
   const [toast, setToast] = useState("");
@@ -84,7 +111,7 @@ function ThreeBalanceApp() {
   }, []);
 
   useEffect(() => {
-    if (!setFrameReady || isFrameReady) return;
+    if (typeof setFrameReady !== "function" || isFrameReady) return;
     setFrameReady();
   }, [isFrameReady, setFrameReady]);
 
@@ -174,11 +201,6 @@ function ThreeBalanceApp() {
 
   const handleShareResult = useCallback(
     async ({ winner, opponent }) => {
-      if (!composeCast) {
-        showToast("Share is unavailable in this client.");
-        return;
-      }
-
       const opponentName = opponent?.name || "my opponent";
       const resultLine =
         winner === "player"
@@ -187,7 +209,33 @@ function ThreeBalanceApp() {
 
       const origin =
         typeof window !== "undefined" ? window.location.origin : "";
-      const shareUrl = origin || "";
+      const shareUrl =
+        origin ||
+        (typeof window !== "undefined" ? window.location.href : "");
+
+      if (!composeCast) {
+        try {
+          if (typeof navigator !== "undefined" && navigator.share) {
+            await navigator.share({
+              text: resultLine,
+              url: shareUrl || undefined,
+            });
+            return;
+          }
+          if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+            await navigator.clipboard.writeText(
+              shareUrl ? `${resultLine}\n${shareUrl}` : resultLine
+            );
+            showToast("Result copied. Share it anywhere.");
+            return;
+          }
+        } catch {
+          // Intentionally ignored; fallback toast below.
+        }
+
+        showToast("Share is unavailable in this client.");
+        return;
+      }
 
       try {
         await composeCast({
@@ -208,29 +256,31 @@ function ThreeBalanceApp() {
 
   return (
     <Shell>
-      <div ref={topRef}>
-        <Header />
-        <Hero />
-      </div>
-      <div ref={profileRef}>
-        <WalletPanel
-          connected={connected}
-          displayName={displayName}
-          avatarUrl={avatarUrl}
-          isPending={isPending}
-          statusMessage={statusMessage}
-          onConnect={connectWallet}
-        />
-      </div>
-      <div ref={arenaRef}>
-        <Suspense fallback={<LoadingCard />}>
-          <BattleArenaScreen
-            onEnterMatch={enterMatch}
-            onShareResult={handleShareResult}
+      <main className="appContent">
+        <div ref={topRef}>
+          <Header />
+          <Hero />
+        </div>
+        <div ref={profileRef}>
+          <WalletPanel
+            connected={connected}
+            displayName={displayName}
+            avatarUrl={avatarUrl}
+            isPending={isPending}
+            statusMessage={statusMessage}
+            onConnect={connectWallet}
           />
-        </Suspense>
-      </div>
-      <Footer />
+        </div>
+        <div ref={arenaRef}>
+          <Suspense fallback={<LoadingCard />}>
+            <BattleArenaScreen
+              onEnterMatch={enterMatch}
+              onShareResult={handleShareResult}
+            />
+          </Suspense>
+        </div>
+        <Footer />
+      </main>
       <BottomNav
         onHome={() => scrollToRef(topRef)}
         onProfile={() => scrollToRef(profileRef)}
@@ -395,16 +445,21 @@ const globalCss = `
   --accent-1: #4666ff;
   --accent-2: #7fb1ff;
   --muted: rgba(232, 236, 255, 0.65);
-  min-height: 100vh;
+  min-height: 100dvh;
+  height: 100dvh;
   background: radial-gradient(1200px 600px at 50% -20%, rgba(74, 108, 255, 0.2), transparent),
     radial-gradient(900px 500px at 10% 10%, rgba(168, 85, 247, 0.18), transparent),
     #07080d;
   color: var(--page-fg);
-  padding: 20px 16px 104px;
+  padding: 12px 12px 92px;
   font-family: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
-  max-width: 480px;
+  max-width: 560px;
+  width: 100%;
   margin: 0 auto;
   position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .appShell::before {
@@ -420,6 +475,17 @@ const globalCss = `
 
 .appShell > * {
   position: relative;
+}
+
+.appContent {
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.appContent::-webkit-scrollbar {
+  display: none;
 }
 
 .footer {
@@ -789,7 +855,7 @@ const bottomNavCss = `
 const toastCss = `
 .toast {
   position: fixed;
-  bottom: 24px;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 80px);
   left: 50%;
   transform: translateX(-50%);
   background: rgba(15, 18, 26, 0.95);

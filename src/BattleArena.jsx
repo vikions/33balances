@@ -141,6 +141,7 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
   });
 
   const fieldRef = useRef(null);
+  const screenRef = useRef(null);
   const playerRef = useRef(null);
   const opponentRef = useRef(null);
   const coinRef = useRef(null);
@@ -176,6 +177,14 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (phase !== "intro" && phase !== "playing" && phase !== "ended") return;
+    const frameId = requestAnimationFrame(() => {
+      screenRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    return () => cancelAnimationFrame(frameId);
+  }, [phase]);
 
   const updateCoinState = useCallback((next) => {
     coinStateRef.current = { ...coinStateRef.current, ...next };
@@ -582,7 +591,7 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
   const activeCoinLabel = coinState.owner ? `Holding ${coinState.type.label}` : "";
 
   return (
-    <div className="battleScreen">
+    <div className="battleScreen" ref={screenRef}>
       {phase === "select" && (
         <div className="battleSelect" data-loading={entryStatus.loading ? "1" : "0"}>
           <div className="battleSelectHeader">
@@ -1115,8 +1124,8 @@ const battleArenaCss = `
 .battleField {
   position: relative;
   width: 100%;
-  min-height: 360px;
-  aspect-ratio: 3 / 4;
+  min-height: 320px;
+  height: min(56dvh, 520px);
   background: #0a0a0a;
   border-radius: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1283,6 +1292,12 @@ const battleArenaCss = `
 @media (min-width: 480px) {
   .battleGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-height: 760px) {
+  .battleField {
+    height: min(50dvh, 440px);
   }
 }
 
