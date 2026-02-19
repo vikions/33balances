@@ -1,95 +1,118 @@
-# ⚖️ TriBalance — The Three Forces of Web3
+# 3balance
 
+3balance is an onchain mini app where players pick a crypto character, sign a match entry transaction on Base, and fight in a fast 1v1 arena.
 
-**TriBalance** explores the balance between the three emerging forces of Web3 — **MetaMask**, **Farcaster**, and **Monad**.  
-Users create a **MetaMask Smart Account** directly inside **Farcaster**, mint an **ERC-1155 Proof NFT** representing their chosen side, and cast on-chain votes — fully **gasless**, powered by **Pimlico Account Abstraction**.
+The core idea is simple: every new match starts with an onchain action. Gameplay is offchain and instant, while entry analytics stay transparent onchain.
 
-The result is a real-time visualization of how these three forces coexist, compete, and evolve — all rendered as a dynamic “balance of powers” interface.
+## What It Does
 
----
+- Sends an onchain `enterMatch(characterId)` transaction before battle start.
+- Uses Base Account + OnchainKit MiniKit inside Base App.
+- Supports sponsored gas flow through Coinbase Paymaster when available.
+- Shows player profile from MiniKit context (`displayName`, `username`, avatar).
+- Runs battle gameplay with character selection, lives, coin control, AI behavior, and win/lose states.
+- Supports result sharing to feed via `composeCast`, with browser fallback (`navigator.share` or copy link).
 
-## 🌌 Concept
+## Game Flow
 
-TriBalance is built around the idea that Web3 is not just about technology stacks, but about **philosophical alignment** —  
-**Wallets (MetaMask)**, **Social Graphs (Farcaster)**, and **New Infrastructure (Monad)** form a trinity that defines user experience, identity, and scalability.
+1. Open app.
+2. Pick fighter.
+3. Sign entry transaction on Base.
+4. Fight opponent in arena.
+5. Share result.
 
-By turning this concept into an interactive, gasless dApp, TriBalance invites users to pick a side and see the collective balance of the ecosystem evolve in real time.
+## Tech Stack
 
----
+- React 19 + Vite 7
+- wagmi + viem
+- `@coinbase/onchainkit`
+- Base Mainnet
+- Solidity (entry contract)
 
-## 🧠 Core Features
+## Smart Contract
 
-- 🦊 **MetaMask Smart Accounts** — deployed automatically inside the Farcaster browser context  
-- 💸 **Gasless Experience** — powered by Pimlico Bundler + Paymaster on EntryPoint v0.7  
-- 🪪 **ERC-1155 Proof NFTs** — mint one token per side (MetaMask / Farcaster / Monad)  
-- 🗳️ **On-chain Voting** — cast a vote with cooldown protection and real-time updates  
-- 📊 **Animated “Balance of Powers” Rings** — visual representation of live voting ratios  
-- 🧩 **One-Click UX** — create → mint → vote, all inside one smooth flow  
+Contract source: `contracts/BattleArenaEntry.sol`
 
----
+Main entry function:
 
-## ⚙️ Architecture
+```solidity
+function enterMatch(string calldata characterId) external
+```
 
-| Layer | Stack |
-|-------|-------|
-| **Frontend** | React (Vite) + Tailwind + viem/ethers |
-| **Smart Accounts** | MetaMask Delegation Toolkit (Hybrid Implementation) |
-| **AA Infrastructure** | Pimlico Bundler & Paymaster (EntryPoint v0.7) |
-| **Wallet Provider** | Farcaster EIP-1193 |
-| **Contracts** | Solidity (ERC-1155 + Voting logic) |
-| **Chain** | Monad Testnet |
+The contract stores:
 
----
+- Total entries
+- Unique players
+- Entries per player
+- Entries per character (by hash)
+- Last entry timestamp per player
 
-## 🔗 Smart Contracts
+## Environment Variables
 
-| Contract | Description |
-|-----------|--------------|
-| **ProofOfTriBalanceNFT** | ERC-1155 collection — each ID represents a side (0=MetaMask, 1=Farcaster, 2=Monad) |
-| **TriBalance** | Records votes, cooldown timers, and global power counts |
+Create `.env.local` and set:
 
-> **Deployed on:** Monad Testnet  
+```bash
+VITE_PUBLIC_ONCHAINKIT_API_KEY=your_onchainkit_api_key
+VITE_BATTLE_ENTRY_CONTRACT=0xYourBattleArenaEntryContract
+```
 
----
+Notes:
 
-## 🚀 User Flow
+- `VITE_BATTLE_ENTRY_CONTRACT` has a default fallback in `src/App.jsx` if env is missing.
+- Paymaster RPC URL is currently configured directly in `src/App.jsx`.
 
-1. **Connect Farcaster Wallet** (EIP-1193 provider).  
-2. **Create Smart Account** — automatically deployed via `getFactoryArgs()`.  
-3. **Mint Proof NFT** for your chosen side.  
-4. **Vote** — send a sponsored `UserOperation` via Pimlico (no gas).  
-5. **Watch the Balance Update** live through animated circular charts.
+## Local Development
 
----
+```bash
+pnpm install
+pnpm dev
+```
 
-## 🧩 Account Abstraction Details
+Build and checks:
 
-- Automatically switches wallet network to **Monad Testnet**  
-- Deploys Smart Account on first interaction if not yet deployed  
-- Fetches valid gas prices using `pimlico_getUserOperationGasPrice`  
-- Sends sponsored userOps via **Pimlico Paymaster**  
-- Fully compatible with **EntryPoint v0.7**
+```bash
+pnpm lint
+pnpm build
+pnpm preview
+```
 
----
-🌐 Live Demo
+## Mini App Metadata
 
-👉 https://farcaster.xyz/miniapps/naH7aj4qOSNb/3balances
-👉 https://3balances.vercel.app/ (vercel link)
+Metadata files:
 
----
+- `public/.well-known/farcaster.json`
+- `index.html` (`fc:miniapp` tag)
 
-🧭 Future Directions
+Screenshots and cover assets:
 
-On-chain leaderboard for recurring “balance epochs”
+- `public/cover-1200x630.png`
+- `public/screenshots/screenshot-1.png`
+- `public/screenshots/screenshot-2.png`
+- `public/screenshots/screenshot-3.png`
 
-Frame integration for Farcaster (native voting)
+## Assets
 
-NFT badges for active participants
+Character images:
 
-Shared “prediction” layer for user-driven governance models
+- `public/battle/characters/`
 
----
+Coin icons:
 
-🧾 License
+- `public/battle/coins/`
 
-MIT © 2025 TriBalance Team
+## Project Structure
+
+- `src/App.jsx` - app shell, wallet/profile, entry tx, share logic, navigation
+- `src/BattleArena.jsx` - game screen and mechanics
+- `src/main.jsx` - OnchainKit provider bootstrap
+- `contracts/BattleArenaEntry.sol` - onchain match entry contract
+
+## Current Status
+
+- Main gameplay and onchain entry flow are live.
+- Browser fallback is enabled if MiniKit is unavailable.
+- UI is optimized for mobile mini app usage.
+
+## License
+
+MIT
