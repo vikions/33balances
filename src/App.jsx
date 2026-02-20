@@ -15,6 +15,9 @@ const CONTRACT_ADDRESS =
   import.meta.env?.VITE_BATTLE_ENTRY_CONTRACT ??
   "0x7b62877EBe12d155F9bbC281fbDe8026F6a2Eccf";
 
+const APP_URL = import.meta.env?.VITE_APP_URL ?? "https://3balances.vercel.app";
+const APP_LOGO_URL = `${APP_URL.replace(/\/$/, "")}/icon.png?v=2`;
+
 // Paymaster (Coinbase Developer Platform)
 const PAYMASTER_URL =
   "https://api.developer.coinbase.com/rpc/v1/base/mmo6mwwplQQx927oL1bz30eQZ33eEDOc";
@@ -31,7 +34,7 @@ const config = createConfig({
   connectors: [
     baseAccount({
       appName: "3balance",
-      appLogoUrl: "https://base.org/logo.png",
+      appLogoUrl: APP_LOGO_URL,
     }),
   ],
 });

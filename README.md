@@ -1,4 +1,8 @@
-# 3balance
+<p align="center">
+  <img src="public/icon.png" alt="3balance logo" width="140" />
+</p>
+
+<h1 align="center">3balance</h1>
 
 3balance is an onchain mini app where players pick a crypto character, sign a match entry transaction on Base, and fight in a fast 1v1 arena.
 
@@ -54,6 +58,7 @@ Create `.env.local` and set:
 ```bash
 VITE_PUBLIC_ONCHAINKIT_API_KEY=your_onchainkit_api_key
 VITE_BATTLE_ENTRY_CONTRACT=0xYourBattleArenaEntryContract
+VITE_APP_URL=https://3balances.vercel.app
 ```
 
 Notes:
