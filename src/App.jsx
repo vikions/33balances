@@ -16,7 +16,7 @@ const CONTRACT_ADDRESS =
   "0x7b62877EBe12d155F9bbC281fbDe8026F6a2Eccf";
 
 const APP_URL = import.meta.env?.VITE_APP_URL ?? "https://3balances.vercel.app";
-const APP_LOGO_URL = `${APP_URL.replace(/\/$/, "")}/icon.png?v=2`;
+const APP_LOGO_URL = `${APP_URL.replace(/\/$/, "")}/icon-v2.png`;
 
 // Paymaster (Coinbase Developer Platform)
 const PAYMASTER_URL =

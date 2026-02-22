@@ -11,7 +11,7 @@
     "version": "1",
     "name": "3balance",
     "homeUrl": "https://3balances.vercel.app",
-    "iconUrl": "https://3balances.vercel.app/icon.png?v=2",
+    "iconUrl": "https://3balances.vercel.app/icon-v2.png",
     "splashImageUrl": "https://3balances.vercel.app/splash.png",
     "splashBackgroundColor": "#0A56FF",
     "webhookUrl": "https://3balances.vercel.app/api/webhook",
