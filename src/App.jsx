@@ -15,8 +15,14 @@ const CONTRACT_ADDRESS =
   import.meta.env?.VITE_BATTLE_ENTRY_CONTRACT ??
   "0x7b62877EBe12d155F9bbC281fbDe8026F6a2Eccf";
 
-const APP_URL = import.meta.env?.VITE_APP_URL ?? "https://3balances.vercel.app";
-const APP_LOGO_URL = `${APP_URL.replace(/\/$/, "")}/vite.svg`;
+const runtimeOrigin =
+  typeof globalThis !== "undefined" && globalThis.location?.origin
+    ? globalThis.location.origin
+    : "https://3balances.vercel.app";
+const APP_URL =
+  (import.meta.env?.VITE_APP_URL && String(import.meta.env.VITE_APP_URL).trim()) ||
+  runtimeOrigin;
+const APP_LOGO_URL = `${APP_URL.replace(/\/$/, "")}/wallet-logo-128.png`;
 
 // Paymaster (Coinbase Developer Platform)
 const PAYMASTER_URL =
