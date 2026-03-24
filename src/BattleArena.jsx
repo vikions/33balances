@@ -119,11 +119,28 @@ const CONTROL_SPEED = 3.0;
 const COIN_HOLD_DURATION = 6000;
 const COIN_RESPAWN_DELAY = 2000;
 const INTRO_DURATION = 1400;
+const DEFAULT_PLAYER_STATS = {
+  entries: 0,
+  lastEntryTime: 0,
+  wins: 0,
+  losses: 0,
+  currentWinStreak: 0,
+};
 
-export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
-  const [entryStatus, setEntryStatus] = useState({
+export default function BattleArenaScreen({
+  onBattleStart,
+  onRecordMatch,
+  onShareResult,
+  playerStats,
+  statsLoading = false,
+  rewardBanner = null,
+}) {
+  const [resultStatus, setResultStatus] = useState({
     loading: false,
     message: "",
+    recorded: false,
+    stats: null,
+    reward: null,
   });
   const [phase, setPhase] = useState("select");
   const [player, setPlayer] = useState(null);
@@ -147,7 +164,7 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
   const coinRef = useRef(null);
   const runningRef = useRef(false);
   const introTimerRef = useRef(null);
-  const autoShareRef = useRef(false);
+  const resultSubmittedRef = useRef(false);
   const controlRef = useRef({
     active: false,
     targetX: 0,
@@ -211,15 +228,21 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
       setPlayerLivesSafe(MAX_LIVES);
       setOpponentLivesSafe(MAX_LIVES);
       setWinner(null);
-      setEntryStatus({ loading: false, message: "" });
+      setResultStatus({
+        loading: false,
+        message: "",
+        recorded: false,
+        stats: null,
+        reward: null,
+      });
       updateCoinState({ owner: null, active: false });
       coinStateRef.current.respawnAt = 0;
       coinStateRef.current.ownerExpiresAt = 0;
       hitCooldownRef.current = 0;
-      autoShareRef.current = false;
+      resultSubmittedRef.current = false;
       setPhase("intro");
     },
-    [player, setEntryStatus, setOpponentLivesSafe, setPlayerLivesSafe, updateCoinState]
+    [player, setOpponentLivesSafe, setPlayerLivesSafe, updateCoinState]
   );
 
   const beginFight = useCallback(() => {
@@ -230,53 +253,91 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
   const resetToSelect = useCallback(() => {
     runningRef.current = false;
     setWinner(null);
-    setEntryStatus({ loading: false, message: "" });
+    setResultStatus({
+      loading: false,
+      message: "",
+      recorded: false,
+      stats: null,
+      reward: null,
+    });
     setPhase("select");
     updateCoinState({ owner: null, active: false });
     coinStateRef.current.ownerExpiresAt = 0;
-    autoShareRef.current = false;
+    resultSubmittedRef.current = false;
     if (introTimerRef.current) {
       clearTimeout(introTimerRef.current);
     }
-  }, [setEntryStatus, updateCoinState]);
+  }, [updateCoinState]);
 
   const handleSelectCharacter = useCallback(
-    async (character) => {
-      if (!character || entryStatus.loading) return;
+    (character) => {
+      if (!character || resultStatus.loading) return;
 
-      if (!onEnterMatch) {
-        prepareMatch(character);
-        if (introTimerRef.current) clearTimeout(introTimerRef.current);
-        introTimerRef.current = setTimeout(beginFight, INTRO_DURATION);
-        return;
-      }
-
-      setEntryStatus({ loading: true, message: "" });
-
-      try {
-        const result = await onEnterMatch(character);
-        if (!result?.ok) {
-          setEntryStatus({
-            loading: false,
-            message: result?.message || "Entry failed. Try again.",
-          });
-          return;
-        }
-      } catch {
-        setEntryStatus({
-          loading: false,
-          message: "Entry failed. Try again.",
-        });
-        return;
-      }
-
-      setEntryStatus({ loading: false, message: "" });
+      onBattleStart?.();
       prepareMatch(character);
       if (introTimerRef.current) clearTimeout(introTimerRef.current);
       introTimerRef.current = setTimeout(beginFight, INTRO_DURATION);
     },
-    [beginFight, entryStatus.loading, onEnterMatch, prepareMatch, setEntryStatus]
+    [beginFight, onBattleStart, prepareMatch, resultStatus.loading]
   );
+
+  const recordMatchResult = useCallback(async () => {
+    if (!winner || !player) return;
+
+    if (!onRecordMatch) {
+      setResultStatus({
+        loading: false,
+        message: "",
+        recorded: true,
+        stats: null,
+        reward: null,
+      });
+      return;
+    }
+
+    setResultStatus((current) => ({
+      ...current,
+      loading: true,
+      message: "Awaiting Base signature for the 0.00001 ETH arena fee...",
+      reward: null,
+    }));
+
+    try {
+      const result = await onRecordMatch({
+        character: player,
+        won: winner === "player",
+      });
+
+      if (!result?.ok) {
+        resultSubmittedRef.current = false;
+        setResultStatus({
+          loading: false,
+          message: result?.message || "Could not record this match on Base.",
+          recorded: false,
+          stats: null,
+          reward: null,
+        });
+        return;
+      }
+
+      setResultStatus({
+        loading: false,
+        message: "Match recorded on Base.",
+        recorded: true,
+        stats: result?.stats ?? null,
+        reward: result?.reward ?? null,
+      });
+    } catch {
+      resultSubmittedRef.current = false;
+      setResultStatus({
+        loading: false,
+        message: "Could not record this match on Base.",
+        recorded: false,
+        stats: null,
+        reward: null,
+      });
+    }
+  }, [onRecordMatch, player, winner]);
 
   const handleShare = useCallback(() => {
     if (!onShareResult || !winner || !player || !opponent) return;
@@ -289,17 +350,11 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
   }, [coinState.type, onShareResult, opponent, player, winner]);
 
   useEffect(() => {
-    if (!onShareResult || !winner || !player || !opponent) return;
-    if (phase !== "ended") return;
-    if (autoShareRef.current) return;
-    autoShareRef.current = true;
-    onShareResult({
-      winner,
-      player,
-      opponent,
-      coin: coinState.type,
-    });
-  }, [coinState.type, onShareResult, opponent, phase, player, winner]);
+    if (phase !== "ended" || !winner || !player) return;
+    if (resultSubmittedRef.current) return;
+    resultSubmittedRef.current = true;
+    recordMatchResult();
+  }, [phase, player, recordMatchResult, winner]);
 
   const spawnCoin = useCallback(() => {
     if (!fieldSize.width || !fieldSize.height) return;
@@ -589,24 +644,38 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
   }, []);
 
   const activeCoinLabel = coinState.owner ? `Holding ${coinState.type.label}` : "";
+  const displayStats = resultStatus.stats || playerStats || DEFAULT_PLAYER_STATS;
+  const activeRewardBanner = resultStatus.reward || rewardBanner;
+  const canLeaveEndScreen = !onRecordMatch || resultStatus.recorded;
+  const resultSubtitle = resultStatus.loading
+    ? "Sign the Base transaction to finalize this match."
+    : resultStatus.recorded
+      ? winner === "player"
+        ? "Arena dominance secured."
+        : "Your opponent claimed the coin."
+      : resultStatus.message || "This match has not been recorded on Base yet.";
 
   return (
     <div className="battleScreen" ref={screenRef}>
       {phase === "select" && (
-        <div className="battleSelect" data-loading={entryStatus.loading ? "1" : "0"}>
+        <div className="battleSelect" data-loading={statsLoading ? "1" : "0"}>
           <div className="battleSelectHeader">
             <div>
               <div className="battleTitle">Choose Your Fighter</div>
               <div className="battleSubtitle">
-                Tap a character to enter the battle arena.
+                Fight first. Your result is recorded on Base after the match.
               </div>
             </div>
           </div>
-          {(entryStatus.loading || entryStatus.message) && (
-            <div className="battleEntryStatus">
-              {entryStatus.loading ? "Awaiting signature..." : entryStatus.message}
+          {activeRewardBanner && (
+            <div className="battleBanner">
+              {`🏆 NFT minted! Token #${activeRewardBanner.tokenId} — ${activeRewardBanner.completedStreak} win streak achieved!`}
             </div>
           )}
+          <BattleStatsPanel stats={displayStats} loading={statsLoading} />
+          <div className="battleInfoNote">
+            Entry fee: 0.00001 ETH. Gas sponsorship is used when Base Account supports it.
+          </div>
           <div className="battleGrid">
             {CHARACTER_POOL.map((character) => (
               <button
@@ -614,7 +683,7 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
                 type="button"
                 className="battleCard"
                 onClick={() => handleSelectCharacter(character)}
-                disabled={entryStatus.loading}
+                disabled={resultStatus.loading}
               >
                 <div
                   className="battleAvatar"
@@ -797,39 +866,54 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
 
             {phase === "ended" && (
               <div className="battleOverlay">
-                <div className="battleResultCard">
-                  <div className="battleResultTitle">
-                    {winner === "player" ? "You Win!" : "You Lose"}
+              <div className="battleResultCard">
+                <div className="battleResultTitle">
+                  {winner === "player" ? "You Win!" : "You Lose"}
+                </div>
+                <div className="battleResultSubtitle">{resultSubtitle}</div>
+                <div className="battleResultStatus">{resultStatus.message}</div>
+                <BattleStatsPanel stats={displayStats} compact />
+                {activeRewardBanner && (
+                  <div className="battleBanner battleBannerInline">
+                    {`🏆 NFT minted! Token #${activeRewardBanner.tokenId} — ${activeRewardBanner.completedStreak} win streak achieved!`}
                   </div>
-                  <div className="battleResultSubtitle">
-                    {winner === "player"
-                      ? "Arena dominance secured."
-                      : "Your opponent claimed the coin."}
-                  </div>
-                  <div className="battleResultActions">
+                )}
+                <div className="battleResultActions">
+                  {!canLeaveEndScreen && !resultStatus.loading && (
                     <button
                       type="button"
                       className="battleBtn primary"
-                      onClick={() => handleSelectCharacter(player)}
+                      onClick={recordMatchResult}
                     >
-                      Play Again
+                      Retry Record
                     </button>
-                    {onShareResult && (
-                      <button
-                        type="button"
-                        className="battleBtn"
-                        onClick={handleShare}
-                      >
-                        Share Result
-                      </button>
-                    )}
+                  )}
+                  <button
+                    type="button"
+                    className="battleBtn primary"
+                    onClick={() => handleSelectCharacter(player)}
+                    disabled={!canLeaveEndScreen || resultStatus.loading}
+                  >
+                    Play Again
+                  </button>
+                  {onShareResult && (
                     <button
                       type="button"
                       className="battleBtn"
-                      onClick={resetToSelect}
+                      onClick={handleShare}
+                      disabled={resultStatus.loading}
                     >
-                      Change Fighter
+                      Share Result
                     </button>
+                  )}
+                  <button
+                    type="button"
+                    className="battleBtn"
+                    onClick={resetToSelect}
+                    disabled={!canLeaveEndScreen || resultStatus.loading}
+                  >
+                    Change Fighter
+                  </button>
                   </div>
                 </div>
               </div>
@@ -848,6 +932,30 @@ export default function BattleArenaScreen({ onEnterMatch, onShareResult }) {
       )}
 
       <style>{battleArenaCss}</style>
+    </div>
+  );
+}
+
+function BattleStatsPanel({ stats, loading = false, compact = false }) {
+  const display = stats || DEFAULT_PLAYER_STATS;
+
+  return (
+    <div className="battleStatsCard" data-compact={compact ? "1" : "0"}>
+      <div className="battleStatsGrid">
+        <div className="battleStat">
+          <div className="battleStatLabel">Wins</div>
+          <div className="battleStatValue">{loading ? "..." : display.wins}</div>
+        </div>
+        <div className="battleStat">
+          <div className="battleStatLabel">Losses</div>
+          <div className="battleStatValue">{loading ? "..." : display.losses}</div>
+        </div>
+        <div className="battleStat">
+          <div className="battleStatLabel">Matches</div>
+          <div className="battleStatValue">{loading ? "..." : display.entries}</div>
+        </div>
+      </div>
+      <div className="battleStreak">{`🔥 Streak: ${loading ? "..." : display.currentWinStreak}/3`}</div>
     </div>
   );
 }
@@ -876,6 +984,76 @@ const battleArenaCss = `
   color: #ffd27a;
   text-align: center;
   margin-bottom: 8px;
+}
+
+.battleBanner {
+  border-radius: 14px;
+  border: 1px solid rgba(255, 208, 117, 0.45);
+  background: rgba(46, 31, 10, 0.86);
+  color: #ffe4a8;
+  padding: 10px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.24);
+}
+
+.battleBannerInline {
+  margin-top: 10px;
+}
+
+.battleStatsCard {
+  border-radius: 16px;
+  border: 1px solid rgba(123, 140, 255, 0.24);
+  background: rgba(11, 16, 28, 0.82);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.battleStatsCard[data-compact="1"] {
+  margin-top: 10px;
+}
+
+.battleStatsGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.battleStat {
+  border-radius: 12px;
+  border: 1px solid rgba(123, 140, 255, 0.18);
+  background: rgba(18, 22, 36, 0.88);
+  padding: 10px 8px;
+  text-align: center;
+}
+
+.battleStatLabel {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: rgba(232, 236, 255, 0.62);
+}
+
+.battleStatValue {
+  margin-top: 4px;
+  font-size: 16px;
+  font-weight: 800;
+  color: #eef3ff;
+}
+
+.battleStreak {
+  font-size: 13px;
+  font-weight: 700;
+  color: #ffcf70;
+  text-align: center;
+}
+
+.battleInfoNote {
+  font-size: 11px;
+  color: rgba(232, 236, 255, 0.68);
+  text-align: center;
+  line-height: 1.5;
 }
 
 .battleIntro {
@@ -1251,6 +1429,13 @@ const battleArenaCss = `
   margin-top: 6px;
 }
 
+.battleResultStatus {
+  min-height: 18px;
+  margin-top: 8px;
+  font-size: 11px;
+  color: #ffd27a;
+}
+
 .battleResultActions {
   display: flex;
   flex-direction: column;
@@ -1302,6 +1487,36 @@ const battleArenaCss = `
 }
 
 @media (prefers-color-scheme: light) {
+  .battleBanner {
+    background: rgba(255, 246, 226, 0.96);
+    border-color: rgba(222, 170, 59, 0.35);
+    color: #7a4b00;
+  }
+
+  .battleStatsCard {
+    background: rgba(246, 249, 255, 0.96);
+    border-color: rgba(79, 106, 182, 0.2);
+  }
+
+  .battleStat {
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(79, 106, 182, 0.16);
+  }
+
+  .battleStatLabel,
+  .battleInfoNote {
+    color: #4a5d80;
+  }
+
+  .battleStatValue {
+    color: #13213a;
+  }
+
+  .battleStreak,
+  .battleResultStatus {
+    color: #b26d00;
+  }
+
   .battleCard {
     background: rgba(245, 248, 255, 0.92);
     border-color: rgba(79, 106, 182, 0.25);

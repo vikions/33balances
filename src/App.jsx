@@ -5,15 +5,17 @@ import { baseAccount } from "wagmi/connectors";
 import { useComposeCast, useMiniKit } from "@coinbase/onchainkit/minikit";
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { sendCalls, getCapabilities } from "@wagmi/core";
-import { parseAbi, encodeFunctionData } from "viem";
+import { getCapabilities, readContract, sendCalls, waitForCallsStatus } from "@wagmi/core";
+import { decodeEventLog, encodeFunctionData, parseAbi, parseEther } from "viem";
 
 const BattleArenaScreen = lazy(() => import("./BattleArena"));
+const ENTRY_FEE = parseEther("0.00001");
+const STREAK_TO_MINT = 3;
 
 // === ADDRESS / CHAIN ===
 const CONTRACT_ADDRESS =
   import.meta.env?.VITE_BATTLE_ENTRY_CONTRACT ??
-  "0x7b62877EBe12d155F9bbC281fbDe8026F6a2Eccf";
+  "0x09C1FaD72f10c0Dd4C083A28990Faa8A7C8F0580";
 
 const runtimeOrigin =
   typeof globalThis !== "undefined" && globalThis.location?.origin
@@ -29,7 +31,11 @@ const PAYMASTER_URL =
   "https://api.developer.coinbase.com/rpc/v1/base/mmo6mwwplQQx927oL1bz30eQZ33eEDOc";
 
 // === ABI ===
-const CONTRACT_ABI = parseAbi(["function enterMatch(string characterId)"]);
+const CONTRACT_ABI = parseAbi([
+  "function enterMatch(string characterId, bool won) payable",
+  "function getPlayerStats(address player) view returns (uint256 entries, uint256 lastEntryTime, uint256 wins, uint256 losses, uint256 currentWinStreak)",
+  "event RewardMinted(address indexed player, uint256 indexed tokenId, uint256 completedStreak)",
+]);
 
 // === WAGMI CONFIG ===
 const config = createConfig({
@@ -46,6 +52,13 @@ const config = createConfig({
 });
 
 const queryClient = new QueryClient();
+const EMPTY_PLAYER_STATS = {
+  entries: 0,
+  lastEntryTime: 0,
+  wins: 0,
+  losses: 0,
+  currentWinStreak: 0,
+};
 
 class MiniKitErrorBoundary extends Component {
   constructor(props) {
@@ -93,6 +106,9 @@ function ThreeBalanceAppCore({ miniKit = null, composeCast = null }) {
 
   const [statusMessage, setStatusMessage] = useState("");
   const [toast, setToast] = useState("");
+  const [playerStats, setPlayerStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [rewardBanner, setRewardBanner] = useState(null);
   const toastTimerRef = useRef(null);
   const connectAttemptedRef = useRef(false);
   const topRef = useRef(null);
@@ -111,6 +127,24 @@ function ThreeBalanceAppCore({ miniKit = null, composeCast = null }) {
     setToast(nextMessage);
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
     toastTimerRef.current = setTimeout(() => setToast(""), 3200);
+  }, []);
+
+  const fetchPlayerStats = useCallback(async (account) => {
+    if (!account) {
+      setPlayerStats(null);
+      return null;
+    }
+
+    const stats = await readContract(config, {
+      address: CONTRACT_ADDRESS,
+      abi: CONTRACT_ABI,
+      functionName: "getPlayerStats",
+      args: [account],
+    });
+
+    const nextStats = normalizePlayerStats(stats);
+    setPlayerStats(nextStats);
+    return nextStats;
   }, []);
 
   useEffect(() => {
@@ -143,6 +177,31 @@ function ThreeBalanceAppCore({ miniKit = null, composeCast = null }) {
     }
   }, [connected, chain, switchChain]);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!connected || !address) {
+      setPlayerStats(null);
+      setStatsLoading(false);
+      return;
+    }
+
+    setStatsLoading(true);
+    fetchPlayerStats(address)
+      .catch(() => {
+        if (!cancelled) {
+          setPlayerStats(EMPTY_PLAYER_STATS);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setStatsLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [address, connected, fetchPlayerStats]);
+
   const connectWallet = async () => {
     try {
       setStatusMessage("");
@@ -157,33 +216,33 @@ function ThreeBalanceAppCore({ miniKit = null, composeCast = null }) {
     }
   };
 
-  const enterMatch = useCallback(
-    async (character) => {
+  const recordMatch = useCallback(
+    async ({ character, won }) => {
       if (!connected || !address) {
         return {
           ok: false,
-          message: "Connect your Base Account to enter the arena.",
+          message: "Connect your Base Account to record the match.",
         };
       }
 
       try {
         const account = address;
-        const characterId =
-          character?.id || character?.name || "unknown-character";
+        const characterId = character?.id || character?.name || "unknown-character";
+        setRewardBanner(null);
 
         const data = encodeFunctionData({
           abi: CONTRACT_ABI,
           functionName: "enterMatch",
-          args: [characterId],
+          args: [characterId, !!won],
         });
 
         const capabilities = await getCapabilities(config, { account });
         const baseCapabilities = capabilities?.[8453];
         const supportsPaymaster = !!baseCapabilities?.paymasterService?.supported;
 
-        await sendCalls(config, {
+        const sentCalls = await sendCalls(config, {
           account,
-          calls: [{ to: CONTRACT_ADDRESS, data }],
+          calls: [{ to: CONTRACT_ADDRESS, data, value: ENTRY_FEE }],
           chainId: 8453,
           capabilities: supportsPaymaster
             ? {
@@ -194,19 +253,45 @@ function ThreeBalanceAppCore({ miniKit = null, composeCast = null }) {
             : undefined,
         });
 
-        showToast(
-          supportsPaymaster
-            ? "Entry confirmed (gas sponsored)!"
-            : "Entry confirmed!"
-        );
+        const callsId =
+          typeof sentCalls === "string" ? sentCalls : sentCalls?.id;
 
-        return { ok: true };
+        if (!callsId) {
+          throw new Error("Call bundle id missing from wallet response.");
+        }
+
+        const status = await waitForCallsStatus(config, {
+          id: callsId,
+          throwOnFailure: true,
+          timeout: 120_000,
+        });
+
+        const reward = extractRewardMint({
+          account,
+          receipts: status?.receipts,
+        });
+        const nextStats = await fetchPlayerStats(account).catch(() => playerStats);
+
+        if (reward) {
+          setRewardBanner(reward);
+        }
+
+        return {
+          ok: true,
+          reward,
+          stats: nextStats ?? playerStats,
+          sponsored: supportsPaymaster,
+        };
       } catch (e) {
         return { ok: false, message: humanError(e) };
       }
     },
-    [address, connected, showToast]
+    [address, connected, fetchPlayerStats, playerStats]
   );
+
+  const handleBattleStart = useCallback(() => {
+    setRewardBanner(null);
+  }, []);
 
   const handleShareResult = useCallback(
     async ({ winner, opponent }) => {
@@ -283,8 +368,12 @@ function ThreeBalanceAppCore({ miniKit = null, composeCast = null }) {
         <div ref={arenaRef}>
           <Suspense fallback={<LoadingCard />}>
             <BattleArenaScreen
-              onEnterMatch={enterMatch}
+              onBattleStart={handleBattleStart}
+              onRecordMatch={recordMatch}
               onShareResult={handleShareResult}
+              playerStats={playerStats}
+              statsLoading={statsLoading}
+              rewardBanner={rewardBanner}
             />
           </Suspense>
         </div>
@@ -443,6 +532,52 @@ function humanError(e) {
     e?.message ||
     String(e)
   );
+}
+
+function normalizePlayerStats(stats) {
+  if (!Array.isArray(stats)) return { ...EMPTY_PLAYER_STATS };
+
+  const [entries, lastEntryTime, wins, losses, currentWinStreak] = stats;
+  return {
+    entries: Number(entries ?? 0n),
+    lastEntryTime: Number(lastEntryTime ?? 0n),
+    wins: Number(wins ?? 0n),
+    losses: Number(losses ?? 0n),
+    currentWinStreak: Number(currentWinStreak ?? 0n),
+  };
+}
+
+function extractRewardMint({ account, receipts }) {
+  const targetAccount = String(account || "").toLowerCase();
+  const receiptLogs = Array.isArray(receipts)
+    ? receipts.flatMap((receipt) => receipt?.logs ?? [])
+    : [];
+
+  for (const log of receiptLogs) {
+    if (String(log?.address || "").toLowerCase() !== CONTRACT_ADDRESS.toLowerCase()) {
+      continue;
+    }
+
+    try {
+      const parsed = decodeEventLog({
+        abi: CONTRACT_ABI,
+        data: log.data,
+        topics: log.topics,
+      });
+
+      if (parsed.eventName !== "RewardMinted") continue;
+      if (String(parsed.args?.player || "").toLowerCase() !== targetAccount) continue;
+
+      return {
+        tokenId: String(parsed.args?.tokenId ?? ""),
+        completedStreak: Number(parsed.args?.completedStreak ?? STREAK_TO_MINT),
+      };
+    } catch {
+      // Ignore unrelated logs in the batch receipt.
+    }
+  }
+
+  return null;
 }
 
 const globalCss = `

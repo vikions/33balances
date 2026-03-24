@@ -31,5 +31,6 @@
 - Vite dev/preview middleware in `src/server/polymarketProxy.js` mirrors these endpoints for local dev (`vite.config.js`).
 
 ## Contracts / assets
-- Solidity contract: `contracts/ProofOfTriBalance.sol`.
+- Live gameplay contract: `contracts/BattleArenaV2.sol`.
+- Legacy contracts still present: `contracts/BattleArenaEntry.sol`, `contracts/ProofOfTriBalance.sol`.
 - Static assets: `public/`, `nft-metadata/`, and `src/assets/`.
