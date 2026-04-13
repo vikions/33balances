@@ -7,7 +7,7 @@
 
 3balance is an onchain mini app where players pick a crypto character, fight in a fast 1v1 arena, and record the result on Base.
 
-The core idea is simple: every new match starts with an onchain action. Gameplay is offchain and instant, while entry analytics stay transparent onchain.
+The core idea is simple: every new match ends with a free onchain result action. Gameplay is offchain and instant, while match history stays transparent onchain.
 
 ## What It Does
 
@@ -36,12 +36,12 @@ The core idea is simple: every new match starts with an onchain action. Gameplay
 
 ## Smart Contract
 
-Contract source: `contracts/BattleArenaV2.sol`
+Contract source: `contracts/BattleArenaV3.sol`
 
 Main entry function:
 
 ```solidity
-function enterMatch(string calldata characterId, bool won) external payable
+function enterMatch(string calldata characterId, bool won) external
 ```
 
 The contract stores:
@@ -67,7 +67,7 @@ Notes:
 
 - `VITE_BATTLE_ENTRY_CONTRACT` has a default fallback in `src/App.jsx` if env is missing.
 - Paymaster RPC URL is currently configured directly in `src/App.jsx`.
-- Current Base mainnet deployment: `0x09C1FaD72f10c0Dd4C083A28990Faa8A7C8F0580`
+- Current Base mainnet deployment: `0x918C7a5209449715CFd78BceF3C2BCBaaAd9CBB9`
 
 ## Local Development
 
@@ -113,7 +113,7 @@ Coin icons:
 - `src/App.jsx` - app shell, wallet/profile, entry tx, share logic, navigation
 - `src/BattleArena.jsx` - game screen and mechanics
 - `src/main.jsx` - OnchainKit provider bootstrap
-- `contracts/BattleArenaV2.sol` - onchain match entry and streak reward contract
+- `contracts/BattleArenaV3.sol` - onchain match entry and streak reward contract
 
 ## Current Status
 

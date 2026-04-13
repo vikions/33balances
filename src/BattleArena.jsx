@@ -298,7 +298,7 @@ export default function BattleArenaScreen({
     setResultStatus((current) => ({
       ...current,
       loading: true,
-      message: "Awaiting Base signature for the 0.00001 ETH arena fee...",
+      message: "Awaiting Base signature to record this match...",
       reward: null,
     }));
 
@@ -674,7 +674,7 @@ export default function BattleArenaScreen({
           )}
           <BattleStatsPanel stats={displayStats} loading={statsLoading} />
           <div className="battleInfoNote">
-            Entry fee: 0.00001 ETH. Gas sponsorship is used when Base Account supports it.
+            Match recording is free. Gas sponsorship is used when Base Account supports it.
           </div>
           <div className="battleGrid">
             {CHARACTER_POOL.map((character) => (

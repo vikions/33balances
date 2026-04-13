@@ -6,16 +6,15 @@ import { useComposeCast, useMiniKit } from "@coinbase/onchainkit/minikit";
 import { createConfig, http } from "wagmi";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { getCapabilities, readContract, sendCalls, waitForCallsStatus } from "@wagmi/core";
-import { decodeEventLog, encodeFunctionData, parseAbi, parseEther } from "viem";
+import { decodeEventLog, encodeFunctionData, parseAbi } from "viem";
 
 const BattleArenaScreen = lazy(() => import("./BattleArena"));
-const ENTRY_FEE = parseEther("0.00001");
 const STREAK_TO_MINT = 3;
 
 // === ADDRESS / CHAIN ===
 const CONTRACT_ADDRESS =
   import.meta.env?.VITE_BATTLE_ENTRY_CONTRACT ??
-  "0x09C1FaD72f10c0Dd4C083A28990Faa8A7C8F0580";
+  "0x918C7a5209449715CFd78BceF3C2BCBaaAd9CBB9";
 
 const runtimeOrigin =
   typeof globalThis !== "undefined" && globalThis.location?.origin
@@ -32,7 +31,7 @@ const PAYMASTER_URL =
 
 // === ABI ===
 const CONTRACT_ABI = parseAbi([
-  "function enterMatch(string characterId, bool won) payable",
+  "function enterMatch(string characterId, bool won)",
   "function getPlayerStats(address player) view returns (uint256 entries, uint256 lastEntryTime, uint256 wins, uint256 losses, uint256 currentWinStreak)",
   "event RewardMinted(address indexed player, uint256 indexed tokenId, uint256 completedStreak)",
 ]);
@@ -242,7 +241,7 @@ function ThreeBalanceAppCore({ miniKit = null, composeCast = null }) {
 
         const sentCalls = await sendCalls(config, {
           account,
-          calls: [{ to: CONTRACT_ADDRESS, data, value: ENTRY_FEE }],
+          calls: [{ to: CONTRACT_ADDRESS, data }],
           chainId: 8453,
           capabilities: supportsPaymaster
             ? {
